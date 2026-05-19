@@ -1,0 +1,32 @@
+version: 1
+
+# Generic Kaiad pipeline for this repo: build the root Dockerfile and
+# deploy the resulting image. This is the simplest, most portable form —
+# Kaiad runs `docker build` on the host daemon, pushes the image to its
+# built-in registry, and deploys it to every bound agent.
+#
+# Adjust as needed:
+#   - ports:        the container's listening port(s) (source of truth)
+#   - domains:      external host(s) routed to a port (needs an LB type)
+#   - loadBalancer: none | metallb | k8s | nginx
+#   - environments: per-environment namespace / overrides
+# Full reference: https://kaiad.dev/reference/pipeline.html
+
+dockerfile:
+  path: Dockerfile
+  context: .
+
+ports:
+  - port: 8080
+    name: http
+
+instances: 1
+
+loadBalancer:
+  type: none
+
+environments:
+  development:
+    namespace: aibe-dev
+  production:
+    namespace: aibe-prod

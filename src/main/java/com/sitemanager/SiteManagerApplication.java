@@ -22,12 +22,19 @@ public class SiteManagerApplication {
     }
 
     // SQLite refuses to open a database when its parent directory is missing.
-    // The default URL points at ./data/sitemanager.db, which can disappear at
-    // runtime if the container mounts an empty volume over /app/data.
+    // Resolve the URL exactly the same way Spring will (env var > system property
+    // > YAML default) and create the parent directory before Hikari connects.
     private static void ensureSqliteDirectoryExists() {
         String url = System.getenv("SPRING_DATASOURCE_URL");
         if (url == null || url.isEmpty()) {
-            url = "jdbc:sqlite:./data/sitemanager.db";
+            url = System.getProperty("spring.datasource.url");
+        }
+        if (url == null || url.isEmpty()) {
+            String dbPath = System.getenv("SQLITE_DB_PATH");
+            if (dbPath == null || dbPath.isEmpty()) {
+                dbPath = "/app/data/sitemanager.db";
+            }
+            url = "jdbc:sqlite:" + dbPath;
         }
         if (!url.startsWith("jdbc:sqlite:")) {
             return;
@@ -36,7 +43,7 @@ public class SiteManagerApplication {
         if (dbPath.isEmpty() || dbPath.equals(":memory:") || dbPath.startsWith("file::memory:")) {
             return;
         }
-        Path parent = Paths.get(dbPath).getParent();
+        Path parent = Paths.get(dbPath).toAbsolutePath().normalize().getParent();
         if (parent == null) {
             return;
         }
@@ -44,7 +51,7 @@ public class SiteManagerApplication {
             Files.createDirectories(parent);
         } catch (IOException e) {
             throw new IllegalStateException(
-                    "Failed to create SQLite data directory: " + parent.toAbsolutePath(), e);
+                    "Failed to create SQLite data directory: " + parent, e);
         }
     }
 }

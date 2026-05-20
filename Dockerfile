@@ -25,6 +25,9 @@ RUN useradd -m -s /bin/bash claudeuser
 # Create workspace directory for cloning repos
 RUN mkdir -p /workspace && chown claudeuser:claudeuser /workspace
 
+# Create data directory for the SQLite database (jdbc:sqlite:./data/sitemanager.db)
+RUN mkdir -p /app/data
+
 EXPOSE 8080
 
 ENTRYPOINT ["java", "-jar", "app.jar"]

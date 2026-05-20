@@ -25,8 +25,8 @@ RUN useradd -m -s /bin/bash claudeuser
 # Create workspace directory for cloning repos
 RUN mkdir -p /workspace && chown claudeuser:claudeuser /workspace
 
-# Create data directory for the SQLite database (jdbc:sqlite:./data/sitemanager.db)
-RUN mkdir -p /app/data
+# Create data directory for the SQLite database (jdbc:sqlite:/data/aibe.db)
+RUN mkdir -p /data
 
 EXPOSE 8080
 

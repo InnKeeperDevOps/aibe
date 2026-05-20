@@ -11,7 +11,7 @@ services:
       - TARGET_REPO_URL=${TARGET_REPO_URL:-}
       - GIT_SSH_KEY_PATH=${GIT_SSH_KEY_PATH:-}
       - CLAUDE_RUN_AS_USER=${CLAUDE_RUN_AS_USER:-claudeuser}
-      - SPRING_DATASOURCE_URL=jdbc:sqlite:/data/sitemanager.db
+      - SPRING_DATASOURCE_URL=jdbc:sqlite:/data/aibe.db
       - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.sqlite.JDBC
       - SPRING_JPA_DATABASE_PLATFORM=org.hibernate.community.dialect.SQLiteDialect
     volumes:
@@ -34,7 +34,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - TARGET_REPO_URL=${TARGET_REPO_URL:-}
       - GIT_SSH_KEY_PATH=${GIT_SSH_KEY_PATH:-}
-      - SPRING_DATASOURCE_URL=jdbc:sqlite:/data/sitemanager.db
+      - SPRING_DATASOURCE_URL=jdbc:sqlite:/data/aibe.db
       - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.sqlite.JDBC
       - SPRING_JPA_DATABASE_PLATFORM=org.hibernate.community.dialect.SQLiteDialect
       - GIT_SSH_COMMAND=ssh -i /root/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new

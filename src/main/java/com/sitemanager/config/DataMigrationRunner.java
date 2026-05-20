@@ -125,10 +125,25 @@ public class DataMigrationRunner implements CommandLineRunner {
                 "check(status in (" + validStatuses + "))");
 
         // Use the rebuilt CREATE TABLE statement with a temporary name.
-        // Allow optional quoting around the table name (Hibernate may emit "suggestions").
+        // Allow optional IF NOT EXISTS and quoting around the table name — different DDL
+        // sources (Hibernate, Flyway migrations) emit these differently, and sqlite_master
+        // may retain the IF NOT EXISTS clause as written.
         String tempCreateSql = newSql.replaceFirst(
-                "(?i)create\\s+table\\s+[\"`']?suggestions[\"`']?",
+                "(?i)create\\s+table\\s+(?:if\\s+not\\s+exists\\s+)?[\"`']?suggestions[\"`']?",
                 "CREATE TABLE suggestions_rebuild");
+
+        // Safety check: if the rewrite failed, executing the unmodified statement would
+        // try to CREATE TABLE suggestions against the existing table and crash startup.
+        // Skip the rebuild and let the app come up rather than failing.
+        if (!tempCreateSql.contains("suggestions_rebuild")) {
+            log.warn("Skipping suggestions CHECK constraint rebuild: could not rewrite table name in stored DDL: {}",
+                    currentSql);
+            return;
+        }
+
+        // Drop any orphan suggestions_rebuild left behind by a previous failed migration
+        // so the retry starts from a clean state.
+        jdbcTemplate.execute("DROP TABLE IF EXISTS suggestions_rebuild");
 
         jdbcTemplate.execute("PRAGMA foreign_keys=OFF");
         jdbcTemplate.execute(tempCreateSql);

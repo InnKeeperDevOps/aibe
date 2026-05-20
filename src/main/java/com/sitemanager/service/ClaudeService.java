@@ -18,8 +18,13 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -1270,12 +1275,82 @@ public class ClaudeService {
     }
 
     /**
-     * Resolve the SSH key path. Uses the configured path if set, otherwise
-     * auto-detects from the user's ~/.ssh directory (id_rsa, id_ed25519, etc.)
-     * or falls back to the git config core.sshCommand key if present.
+     * Materialize the SSH key stored in site_settings to a 0600 file on disk so it can
+     * be passed to ssh via GIT_SSH_COMMAND. Returns the file path, or null if no key
+     * is configured in settings or materialization fails. Idempotent: only rewrites
+     * when the key content has changed.
+     */
+    String materializeSettingsSshKey() {
+        String keyContent;
+        try {
+            keyContent = getSettings().getGitSshKey();
+        } catch (Exception e) {
+            log.debug("Could not read git SSH key from settings: {}", e.getMessage());
+            return null;
+        }
+        if (keyContent == null || keyContent.isBlank()) {
+            return null;
+        }
+
+        // SSH refuses keys without a trailing newline
+        String normalized = keyContent.endsWith("\n") ? keyContent : keyContent + "\n";
+
+        try {
+            File sshDir = new File(workspaceDir, ".ssh");
+            if (!sshDir.exists() && !sshDir.mkdirs()) {
+                log.warn("Failed to create directory for settings SSH key: {}", sshDir);
+                return null;
+            }
+            Path keyFile = new File(sshDir, "settings_git_id").toPath();
+
+            boolean needsWrite = !Files.exists(keyFile) ||
+                    !new String(Files.readAllBytes(keyFile), StandardCharsets.UTF_8).equals(normalized);
+            if (needsWrite) {
+                Files.write(keyFile, normalized.getBytes(StandardCharsets.UTF_8));
+                Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rw-------");
+                try {
+                    Files.setPosixFilePermissions(keyFile, perms);
+                } catch (UnsupportedOperationException ignored) {
+                    // Non-POSIX filesystem; best-effort fall-through (key may still work)
+                }
+                // When subprocesses run as a different OS user, the key file must be
+                // readable by that user — chown it.
+                if (shouldRunAsDifferentUser()) {
+                    try {
+                        ProcessBuilder chownPb = new ProcessBuilder(
+                                "chown", claudeRunAsUser + ":" + claudeRunAsUser, keyFile.toString());
+                        chownPb.redirectErrorStream(true);
+                        Process chownProcess = chownPb.start();
+                        chownProcess.getInputStream().readAllBytes();
+                        chownProcess.waitFor();
+                    } catch (Exception e) {
+                        log.warn("Failed to chown settings SSH key to {}: {}", claudeRunAsUser, e.getMessage());
+                    }
+                }
+                log.info("Materialized settings SSH key at {}", keyFile);
+            }
+            return keyFile.toString();
+        } catch (Exception e) {
+            log.error("Failed to materialize settings SSH key: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Resolve the SSH key path. Prefers a key configured via the Settings page
+     * (stored in the DB, materialized to a 0600 file), then the explicitly
+     * configured app.git-ssh-key-path, then auto-detects from the user's ~/.ssh
+     * directory (id_rsa, id_ed25519, etc.) or falls back to the git config
+     * core.sshCommand key if present.
      */
     private String resolveGitSshKeyPath() {
-        // Use explicitly configured path first
+        // 1. Key configured via Settings page takes priority
+        String settingsKeyPath = materializeSettingsSshKey();
+        if (settingsKeyPath != null) {
+            return settingsKeyPath;
+        }
+
+        // 2. Use explicitly configured path next
         if (gitSshKeyPath != null && !gitSshKeyPath.isBlank()) {
             File key = new File(gitSshKeyPath);
             if (key.exists() && key.isFile()) {

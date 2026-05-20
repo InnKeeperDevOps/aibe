@@ -47,6 +47,12 @@ public class SiteSettingsService {
         current.setAutoMergePr(updated.isAutoMergePr());
         current.setRequireRegistrationApproval(updated.isRequireRegistrationApproval());
         current.setRegistrationsEnabled(updated.isRegistrationsEnabled());
+        // SSH key: only update when caller provides a non-null value, so blank submissions
+        // from the UI (where the existing key is never echoed back) preserve the stored key.
+        // An explicit empty string clears the key.
+        if (updated.getGitSshKey() != null) {
+            current.setGitSshKey(updated.getGitSshKey().isBlank() ? null : updated.getGitSshKey());
+        }
         SiteSettings saved = settingsRepository.save(current);
 
         // Re-clone the target repository into main-repo/ so files are up to date

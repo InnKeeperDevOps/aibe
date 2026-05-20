@@ -1,5 +1,6 @@
 package com.sitemanager.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 
 @Entity
@@ -55,6 +56,10 @@ public class SiteSettings {
     @Column(name = "registrations_enabled", nullable = false)
     private boolean registrationsEnabled = true;
 
+    @Column(name = "git_ssh_key", columnDefinition = "TEXT")
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String gitSshKey;
+
     public SiteSettings() {}
 
     public Long getId() { return id; }
@@ -89,4 +94,11 @@ public class SiteSettings {
     public void setRequireRegistrationApproval(boolean v) { this.requireRegistrationApproval = v; }
     public boolean isRegistrationsEnabled() { return registrationsEnabled; }
     public void setRegistrationsEnabled(boolean v) { this.registrationsEnabled = v; }
+    public String getGitSshKey() { return gitSshKey; }
+    public void setGitSshKey(String v) { this.gitSshKey = v; }
+
+    @JsonProperty("hasGitSshKey")
+    public boolean hasGitSshKey() {
+        return gitSshKey != null && !gitSshKey.isBlank();
+    }
 }

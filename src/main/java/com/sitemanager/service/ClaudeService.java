@@ -835,12 +835,8 @@ public class ClaudeService {
             pb.directory(new File(workingDir));
         }
 
-        // Propagate SSH key to Claude CLI subprocess so git operations use SSH auth
-        String sshKeyPath = resolveGitSshKeyPath();
-        if (sshKeyPath != null) {
-            String sshCommand = "ssh -i " + sshKeyPath + " -o StrictHostKeyChecking=no";
-            pb.environment().put("GIT_SSH_COMMAND", sshCommand);
-        }
+        // Propagate SSH key and HOME to Claude CLI subprocess so git operations use SSH auth
+        applyGitEnvironment(pb);
 
         pb.redirectErrorStream(true);
         pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
@@ -1098,11 +1094,7 @@ public class ClaudeService {
         pb.redirectErrorStream(true);
         pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
 
-        String sshKeyPath = resolveGitSshKeyPath();
-        if (sshKeyPath != null) {
-            String sshCommand = "ssh -i " + sshKeyPath + " -o StrictHostKeyChecking=no";
-            pb.environment().put("GIT_SSH_COMMAND", sshCommand);
-        }
+        applyGitEnvironment(pb);
 
         Process process = pb.start();
         try (BufferedReader reader = new BufferedReader(
@@ -1146,11 +1138,7 @@ public class ClaudeService {
         fetchPb.directory(dir);
         fetchPb.redirectErrorStream(true);
         fetchPb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
-        String sshKeyPath = resolveGitSshKeyPath();
-        if (sshKeyPath != null) {
-            fetchPb.environment().put("GIT_SSH_COMMAND",
-                    "ssh -i " + sshKeyPath + " -o StrictHostKeyChecking=no");
-        }
+        applyGitEnvironment(fetchPb);
         Process fetchProcess = fetchPb.start();
         consumeStream(fetchProcess.getInputStream());
         fetchProcess.waitFor();
@@ -1248,12 +1236,7 @@ public class ClaudeService {
         pb.redirectErrorStream(true);
         pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
 
-        String sshKeyPath = resolveGitSshKeyPath();
-        if (sshKeyPath != null) {
-            String sshCommand = "ssh -i " + sshKeyPath + " -o StrictHostKeyChecking=no";
-            pb.environment().put("GIT_SSH_COMMAND", sshCommand);
-            log.info("Using SSH key for git clone: {}", sshKeyPath);
-        }
+        applyGitEnvironment(pb);
 
         Process process = pb.start();
 
@@ -1337,11 +1320,55 @@ public class ClaudeService {
     }
 
     /**
+     * Resolve the home directory of the run-as-user (configured via
+     * {@code app.claude-run-as-user}). Returns null if not running as a different
+     * user. Queries /etc/passwd via {@code getent} and falls back to /home/&lt;user&gt;.
+     */
+    private String resolveRunAsUserHome() {
+        if (!shouldRunAsDifferentUser()) {
+            return null;
+        }
+        try {
+            ProcessBuilder pb = new ProcessBuilder("getent", "passwd", claudeRunAsUser);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            p.waitFor();
+            // passwd format: username:x:uid:gid:gecos:home:shell
+            String[] parts = output.split(":");
+            if (parts.length >= 6 && !parts[5].isBlank()) {
+                return parts[5];
+            }
+        } catch (Exception e) {
+            log.debug("Could not resolve home for user {}: {}", claudeRunAsUser, e.getMessage());
+        }
+        return "/home/" + claudeRunAsUser;
+    }
+
+    /**
+     * Configure a ProcessBuilder's environment for git operations: sets
+     * GIT_SSH_COMMAND if an SSH key is available, and sets HOME to the
+     * run-as-user's home so ssh can read its known_hosts/config and write
+     * back to known_hosts when adding a new host.
+     */
+    private void applyGitEnvironment(ProcessBuilder pb) {
+        String runAsHome = resolveRunAsUserHome();
+        if (runAsHome != null) {
+            pb.environment().put("HOME", runAsHome);
+        }
+        String sshKeyPath = resolveGitSshKeyPath();
+        if (sshKeyPath != null) {
+            pb.environment().put("GIT_SSH_COMMAND",
+                    "ssh -i " + sshKeyPath + " -o StrictHostKeyChecking=no -o IdentitiesOnly=yes");
+        }
+    }
+
+    /**
      * Resolve the SSH key path. Prefers a key configured via the Settings page
      * (stored in the DB, materialized to a 0600 file), then the explicitly
-     * configured app.git-ssh-key-path, then auto-detects from the user's ~/.ssh
-     * directory (id_rsa, id_ed25519, etc.) or falls back to the git config
-     * core.sshCommand key if present.
+     * configured app.git-ssh-key-path, then the run-as-user's ~/.ssh, then
+     * auto-detects from the current user's ~/.ssh (id_rsa, id_ed25519, etc.),
+     * or falls back to the git config core.sshCommand key if present.
      */
     private String resolveGitSshKeyPath() {
         // 1. Key configured via Settings page takes priority
@@ -1359,6 +1386,22 @@ public class ClaudeService {
             log.warn("Configured SSH key not found at {}", gitSshKeyPath);
         }
 
+        String[] candidates = {"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"};
+
+        // If running git as a different user, prefer that user's ~/.ssh — keys
+        // in root's ~/.ssh aren't readable by an unprivileged user via runuser.
+        String runAsHome = resolveRunAsUserHome();
+        if (runAsHome != null) {
+            String runAsSshDir = runAsHome + "/.ssh";
+            for (String candidate : candidates) {
+                File key = new File(runAsSshDir, candidate);
+                if (key.exists() && key.isFile()) {
+                    log.info("Auto-detected SSH key (run-as-user): {}", key.getAbsolutePath());
+                    return key.getAbsolutePath();
+                }
+            }
+        }
+
         // Auto-detect from ~/.ssh
         String userHome = System.getProperty("user.home");
         if (userHome == null) {
@@ -1366,7 +1409,6 @@ public class ClaudeService {
         }
 
         String sshDir = userHome + "/.ssh";
-        String[] candidates = {"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"};
         for (String candidate : candidates) {
             File key = new File(sshDir, candidate);
             if (key.exists() && key.isFile()) {
@@ -1430,11 +1472,7 @@ public class ClaudeService {
         pb.redirectErrorStream(true);
         pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
 
-        String sshKeyPath = resolveGitSshKeyPath();
-        if (sshKeyPath != null) {
-            pb.environment().put("GIT_SSH_COMMAND",
-                    "ssh -i " + sshKeyPath + " -o StrictHostKeyChecking=no");
-        }
+        applyGitEnvironment(pb);
 
         Process process = pb.start();
         StringBuilder output = new StringBuilder();

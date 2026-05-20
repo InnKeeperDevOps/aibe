@@ -151,6 +151,95 @@ class SettingsControllerTest {
     }
 
     @Test
+    void getSettings_doesNotIncludeGitSshKey_andHasGitSshKeyIsFalseByDefault() throws Exception {
+        mockMvc.perform(get("/api/settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gitSshKey").doesNotExist())
+                .andExpect(jsonPath("$.hasGitSshKey").value(false));
+    }
+
+    @Test
+    void updateSettings_gitSshKey_isPersistedButNotEchoedBack() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        String key = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----";
+        String body = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"gitSshKey\":\"" + key.replace("\n", "\\n") + "\"}";
+
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gitSshKey").doesNotExist())
+                .andExpect(jsonPath("$.hasGitSshKey").value(true));
+
+        mockMvc.perform(get("/api/settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gitSshKey").doesNotExist())
+                .andExpect(jsonPath("$.hasGitSshKey").value(true));
+    }
+
+    @Test
+    void updateSettings_gitSshKey_omittedOrNull_preservesExistingKey() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        String firstBody = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"gitSshKey\":\"ssh-key-content\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(firstBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasGitSshKey").value(true));
+
+        // Second update with gitSshKey omitted should keep the previously stored key
+        String secondBody = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Updated Site\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(secondBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.siteName").value("Updated Site"))
+                .andExpect(jsonPath("$.hasGitSshKey").value(true));
+
+        // Explicit null is also treated as "do not change"
+        String nullBody = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Updated Site\",\"gitSshKey\":null}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(nullBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasGitSshKey").value(true));
+    }
+
+    @Test
+    void updateSettings_gitSshKey_blankString_clearsKey() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        String firstBody = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"gitSshKey\":\"ssh-key-content\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(firstBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasGitSshKey").value(true));
+
+        // Empty string explicitly clears
+        String clearBody = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"gitSshKey\":\"\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(clearBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasGitSshKey").value(false));
+    }
+
+    @Test
     void getSettings_requireRegistrationApproval_reflectsPersistedValue() throws Exception {
         MockHttpSession session = new MockHttpSession();
         session.setAttribute("username", "admin");

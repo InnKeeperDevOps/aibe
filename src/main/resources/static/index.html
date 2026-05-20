@@ -519,6 +519,17 @@
                             Leave blank to disable Slack notifications.
                         </small>
                     </div>
+                    <div class="form-group" style="margin-top:0.75rem">
+                        <label>Git SSH Private Key</label>
+                        <textarea id="settingGitSshKey" rows="6"
+                                  spellcheck="false"
+                                  autocomplete="off"
+                                  style="width:100%;box-sizing:border-box;font-family:monospace;font-size:0.85rem"
+                                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
+                        <small id="settingGitSshKeyStatus" style="color:var(--text-muted);display:block;margin-top:0.25rem">
+                            Paste a private key to authenticate git operations (clone, pull, push). Leave blank to keep the existing key.
+                        </small>
+                    </div>
                 </div>
 
                 <button class="btn btn-primary" onclick="app.saveSettings()" style="margin-top:1rem">

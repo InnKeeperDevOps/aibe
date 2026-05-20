@@ -23,6 +23,16 @@ export async function loadSettings() {
     slackInput.placeholder = settings.slackWebhookUrl
         ? 'Currently configured — enter new URL to replace'
         : 'https://hooks.slack.com/services/...';
+    const sshKeyInput = document.getElementById('settingGitSshKey');
+    if (sshKeyInput) {
+        sshKeyInput.value = '';
+        const sshKeyStatus = document.getElementById('settingGitSshKeyStatus');
+        if (sshKeyStatus) {
+            sshKeyStatus.textContent = settings.hasGitSshKey
+                ? 'A key is currently configured. Paste a new key to replace it, or leave blank to keep the existing key.'
+                : 'Paste a private key to authenticate git operations (clone, pull, push). Leave blank to keep the existing key.';
+        }
+    }
     await loadPendingUsers();
     await loadGroups();
     await loadAllUsers();
@@ -379,6 +389,10 @@ export async function assignUserGroup(userId, groupId) {
 }
 
 export async function saveSettings() {
+    const sshKeyEl = document.getElementById('settingGitSshKey');
+    // Send the SSH key only when the textarea has content. Sending null preserves the
+    // existing key on the backend (which never echoes the stored key back to the UI).
+    const sshKeyValue = sshKeyEl && sshKeyEl.value.trim() ? sshKeyEl.value : null;
     const data = await api('/settings', {
         method: 'PUT',
         body: JSON.stringify({
@@ -395,13 +409,21 @@ export async function saveSettings() {
             requireApproval: document.getElementById('settingApproval').checked,
             autoMergePr: document.getElementById('autoMergePr').checked,
             slackWebhookUrl: document.getElementById('settingSlackWebhookUrl').value || null,
-            registrationsEnabled: document.getElementById('registrationsEnabled').checked
+            registrationsEnabled: document.getElementById('registrationsEnabled').checked,
+            gitSshKey: sshKeyValue
         })
     });
     if (data.error) { alert(data.error); return; }
     state.settings = data;
     const siteName = document.getElementById('settingSiteName').value;
     if (siteName) document.getElementById('siteName').textContent = siteName;
+    if (sshKeyEl) sshKeyEl.value = '';
+    const sshKeyStatus = document.getElementById('settingGitSshKeyStatus');
+    if (sshKeyStatus) {
+        sshKeyStatus.textContent = data.hasGitSshKey
+            ? 'A key is currently configured. Paste a new key to replace it, or leave blank to keep the existing key.'
+            : 'Paste a private key to authenticate git operations (clone, pull, push). Leave blank to keep the existing key.';
+    }
     alert('Settings saved!');
 }
 

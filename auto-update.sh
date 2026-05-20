@@ -45,6 +45,11 @@ start_app() {
         waited=$((waited + 1))
     done
 
+    # SQLite refuses to open ./data/sitemanager.db if the parent directory is
+    # missing. The dev image (gradle:8.14-jdk17) does not include the
+    # Dockerfile's mkdir, so create it here before launching.
+    mkdir -p ./data
+
     log "Starting application..."
     setsid ./gradlew bootRun --no-daemon &
     local pid=$!

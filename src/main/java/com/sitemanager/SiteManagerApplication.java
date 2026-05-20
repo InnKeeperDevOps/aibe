@@ -21,9 +21,14 @@ public class SiteManagerApplication {
         SpringApplication.run(SiteManagerApplication.class, args);
     }
 
-    // SQLite refuses to open a database when its parent directory is missing.
-    // Resolve the URL exactly the same way Spring will (env var > system property
-    // > YAML default) and create the parent directory before Hikari connects.
+    // SQLite refuses to open a database when its parent directory is missing,
+    // and resolves relative paths against the process cwd at connect time
+    // (producing errors like "/app/./data does not exist"). Resolve the URL
+    // exactly the same way Spring will (env var > system property > YAML
+    // default), absolutize the path, create the parent directory, and finally
+    // pin the absolute URL via a JVM system property so it takes precedence
+    // over any relative SPRING_DATASOURCE_URL that may be set in the runtime
+    // environment.
     private static void ensureSqliteDirectoryExists() {
         String url = System.getenv("SPRING_DATASOURCE_URL");
         if (url == null || url.isEmpty()) {
@@ -43,15 +48,19 @@ public class SiteManagerApplication {
         if (dbPath.isEmpty() || dbPath.equals(":memory:") || dbPath.startsWith("file::memory:")) {
             return;
         }
-        Path parent = Paths.get(dbPath).toAbsolutePath().normalize().getParent();
-        if (parent == null) {
-            return;
+        Path absolutePath = Paths.get(dbPath).toAbsolutePath().normalize();
+        Path parent = absolutePath.getParent();
+        if (parent != null) {
+            try {
+                Files.createDirectories(parent);
+            } catch (IOException e) {
+                throw new IllegalStateException(
+                        "Failed to create SQLite data directory: " + parent, e);
+            }
         }
-        try {
-            Files.createDirectories(parent);
-        } catch (IOException e) {
-            throw new IllegalStateException(
-                    "Failed to create SQLite data directory: " + parent, e);
-        }
+        // JVM system properties outrank OS env vars in Spring Boot's
+        // PropertySource order, so this defeats a stale SPRING_DATASOURCE_URL
+        // pointing at the old relative path.
+        System.setProperty("spring.datasource.url", "jdbc:sqlite:" + absolutePath);
     }
 }

@@ -97,6 +97,15 @@ public class DataMigrationRunner implements CommandLineRunner {
             return;
         }
 
+        // Only rebuild when an existing status CHECK constraint is present and needs updating.
+        // Without this guard, a schema lacking the constraint would trigger an unnecessary
+        // rebuild on every startup (none of the enum values appear in the SQL).
+        boolean hasStatusCheckConstraint = currentSql.matches(
+                "(?is).*check\\s*\\(\\s*status\\s+in\\s*\\([^)]+\\)\\).*");
+        if (!hasStatusCheckConstraint) {
+            return;
+        }
+
         String validStatuses = Arrays.stream(SuggestionStatus.values())
                 .map(s -> "'" + s.name() + "'")
                 .collect(Collectors.joining(","));
@@ -115,9 +124,10 @@ public class DataMigrationRunner implements CommandLineRunner {
                 "(?i)check\\s*\\(\\s*status\\s+in\\s*\\([^)]+\\)\\)",
                 "check(status in (" + validStatuses + "))");
 
-        // Use the rebuilt CREATE TABLE statement with a temporary name
+        // Use the rebuilt CREATE TABLE statement with a temporary name.
+        // Allow optional quoting around the table name (Hibernate may emit "suggestions").
         String tempCreateSql = newSql.replaceFirst(
-                "(?i)create\\s+table\\s+suggestions\\b",
+                "(?i)create\\s+table\\s+[\"`']?suggestions[\"`']?",
                 "CREATE TABLE suggestions_rebuild");
 
         jdbcTemplate.execute("PRAGMA foreign_keys=OFF");

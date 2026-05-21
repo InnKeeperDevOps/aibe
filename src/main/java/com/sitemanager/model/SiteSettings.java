@@ -7,6 +7,9 @@ import jakarta.persistence.*;
 @Table(name = "site_settings")
 public class SiteSettings {
 
+    public static final String DEFAULT_CLAUDE_CONFIG =
+            "{\"theme\":\"light\",\"hasCompletedOnboarding\":true}";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -64,6 +67,9 @@ public class SiteSettings {
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String claudeCredentials;
 
+    @Column(name = "claude_config", columnDefinition = "TEXT")
+    private String claudeConfig = DEFAULT_CLAUDE_CONFIG;
+
     public SiteSettings() {}
 
     public Long getId() { return id; }
@@ -102,6 +108,8 @@ public class SiteSettings {
     public void setGitSshKey(String v) { this.gitSshKey = v; }
     public String getClaudeCredentials() { return claudeCredentials; }
     public void setClaudeCredentials(String v) { this.claudeCredentials = v; }
+    public String getClaudeConfig() { return claudeConfig; }
+    public void setClaudeConfig(String v) { this.claudeConfig = v; }
 
     @JsonProperty("hasGitSshKey")
     public boolean hasGitSshKey() {

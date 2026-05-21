@@ -119,6 +119,7 @@ public class ClaudeService {
         }
         resolveClaudeCliPath();
         materializeStoredClaudeCredentials();
+        materializeStoredClaudeConfig();
     }
 
     /**
@@ -146,6 +147,34 @@ public class ClaudeService {
             log.info("Materialized stored Claude credentials to {}", credsFile);
         } catch (Exception e) {
             log.warn("Failed to materialize stored Claude credentials: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Write the Claude CLI config (theme, onboarding flag, …) stored in
+     * site_settings out to {@code ~/.claude.json} so the CLI picks it up on
+     * the next invocation. Seeds the row with {@link SiteSettings#DEFAULT_CLAUDE_CONFIG}
+     * on first install so a brand-new container starts in light mode with the
+     * onboarding wizard suppressed.
+     */
+    public void materializeStoredClaudeConfig() {
+        try {
+            SiteSettings settings = settingsRepository.findAll().stream()
+                    .findFirst()
+                    .orElseGet(() -> settingsRepository.save(new SiteSettings()));
+            String configJson = settings.getClaudeConfig();
+            if (configJson == null || configJson.isBlank()) {
+                configJson = SiteSettings.DEFAULT_CLAUDE_CONFIG;
+                settings.setClaudeConfig(configJson);
+                settingsRepository.save(settings);
+            }
+            Path configFile = Path.of(getClaudeCliHome(), ".claude.json");
+            Files.createDirectories(configFile.getParent());
+            Files.writeString(configFile, configJson, StandardCharsets.UTF_8);
+            chownToRunAsUser(configFile);
+            log.info("Materialized Claude CLI config to {}", configFile);
+        } catch (Exception e) {
+            log.warn("Failed to materialize Claude CLI config: {}", e.getMessage());
         }
     }
 

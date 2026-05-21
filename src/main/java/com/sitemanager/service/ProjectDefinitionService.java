@@ -23,10 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
@@ -694,13 +691,12 @@ public class ProjectDefinitionService {
     // ---- Git helpers (protected for testability) ----
 
     protected String detectDefaultBranch(String repoDir) {
+        // Delegate to ClaudeService so the command runs as the configured run-as user
+        // when the JVM runs as root — otherwise git would create files in .git/ owned
+        // by root and later runuser-wrapped git operations would fail with EACCES.
         try {
-            ProcessBuilder pb = new ProcessBuilder("git", "rev-parse", "--verify", "origin/main");
-            pb.directory(new File(repoDir));
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-            process.getInputStream().readAllBytes();
-            int exitCode = process.waitFor();
+            int exitCode = claudeService.runGitCommandAsUserExitCode(
+                    repoDir, "git", "rev-parse", "--verify", "origin/main");
             return exitCode == 0 ? "main" : "master";
         } catch (Exception e) {
             log.warn("Could not detect default branch, defaulting to main: {}", e.getMessage());
@@ -709,25 +705,9 @@ public class ProjectDefinitionService {
     }
 
     protected void runGitCommand(String repoDir, String... command) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(new File(repoDir));
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-                log.debug("Git {}: {}", command[1], line);
-            }
-        }
-
-        int exitCode = process.waitFor();
-        if (exitCode != 0) {
-            throw new RuntimeException(
-                    "Git command failed (" + String.join(" ", command) + "): " + output.toString().trim());
-        }
+        // Delegate to ClaudeService so the command runs as the configured run-as user
+        // when the JVM runs as root — otherwise git would create files in .git/ owned
+        // by root and later runuser-wrapped git operations would fail with EACCES.
+        claudeService.runGitCommandAsUser(repoDir, command);
     }
 }

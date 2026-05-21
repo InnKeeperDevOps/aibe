@@ -1413,6 +1413,54 @@ public class ClaudeService {
         return exitCode == 0 ? "main" : "master";
     }
 
+    /**
+     * Run a git command in {@code repoDir} as the configured run-as user (when running
+     * as root). Used by callers outside this service so their git operations don't leave
+     * files in {@code .git/} owned by root, which would later break commands invoked via
+     * {@code runuser} (e.g. {@code git pull} failing with
+     * "cannot open '.git/FETCH_HEAD': Permission denied").
+     */
+    public void runGitCommandAsUser(String repoDir, String... command) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(wrapCommandForUser(java.util.List.of(command)));
+        pb.directory(new File(repoDir));
+        pb.redirectErrorStream(true);
+        pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
+        applyGitEnvironment(pb);
+
+        Process process = pb.start();
+        StringBuilder output = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+        }
+
+        int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            throw new RuntimeException(
+                    "Git command failed (" + String.join(" ", command) + "): " + output.toString().trim());
+        }
+    }
+
+    /**
+     * Run a git command in {@code repoDir} as the configured run-as user and return its
+     * exit code without throwing on non-zero. Used for probes like checking whether a
+     * branch exists.
+     */
+    public int runGitCommandAsUserExitCode(String repoDir, String... command) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(wrapCommandForUser(java.util.List.of(command)));
+        pb.directory(new File(repoDir));
+        pb.redirectErrorStream(true);
+        pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
+        applyGitEnvironment(pb);
+
+        Process process = pb.start();
+        consumeStream(process.getInputStream());
+        return process.waitFor();
+    }
+
     private void consumeStream(InputStream is) throws IOException {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
             while (reader.readLine() != null) { /* drain */ }

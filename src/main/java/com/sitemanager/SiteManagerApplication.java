@@ -37,7 +37,7 @@ public class SiteManagerApplication {
         if (url == null || url.isEmpty()) {
             String dbPath = System.getenv("SQLITE_DB_PATH");
             if (dbPath == null || dbPath.isEmpty()) {
-                dbPath = "/app/data/sitemanager.db";
+                dbPath = "/data/aibe.db";
             }
             url = "jdbc:sqlite:" + dbPath;
         }

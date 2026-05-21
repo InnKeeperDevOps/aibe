@@ -3,7 +3,7 @@ spring:
     exclude:
       - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   datasource:
-    url: jdbc:sqlite:${SQLITE_DB_PATH:/app/data/sitemanager.db}
+    url: jdbc:sqlite:${SQLITE_DB_PATH:/data/aibe.db}
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 3

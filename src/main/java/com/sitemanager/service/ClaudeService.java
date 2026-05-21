@@ -1689,9 +1689,11 @@ public class ClaudeService {
     /**
      * Resolve the SSH key path. Prefers a key configured via the Settings page
      * (stored in the DB, materialized to a 0600 file), then the explicitly
-     * configured app.git-ssh-key-path, then the run-as-user's ~/.ssh, then
-     * auto-detects from the current user's ~/.ssh (id_rsa, id_ed25519, etc.),
-     * or falls back to the git config core.sshCommand key if present.
+     * configured app.git-ssh-key-path. When git runs as the JVM user, auto-detects
+     * from {@code ~/.ssh}; when git runs as a different user via {@code runuser},
+     * only considers that user's {@code ~/.ssh} (since keys in the JVM user's
+     * {@code ~/.ssh} would not be readable by the runuser target). Finally falls
+     * back to the git config {@code core.sshCommand} key if present.
      */
     private String resolveGitSshKeyPath() {
         // 1. Key configured via Settings page takes priority
@@ -1711,8 +1713,10 @@ public class ClaudeService {
 
         String[] candidates = {"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"};
 
-        // If running git as a different user, prefer that user's ~/.ssh — keys
-        // in root's ~/.ssh aren't readable by an unprivileged user via runuser.
+        // If running git as a different user, only consider that user's ~/.ssh — keys
+        // in root's ~/.ssh aren't readable by an unprivileged user via runuser, and
+        // returning such a path would make ssh fail with "Could not read from remote
+        // repository." (the underlying cause being a Permission denied on the key file).
         String runAsHome = resolveRunAsUserHome();
         if (runAsHome != null) {
             String runAsSshDir = runAsHome + "/.ssh";
@@ -1723,20 +1727,22 @@ public class ClaudeService {
                     return key.getAbsolutePath();
                 }
             }
-        }
+        } else {
+            // Auto-detect from current user's ~/.ssh only when git will run as the
+            // same user (no runuser wrapping). Otherwise the key would be unreadable
+            // to the runuser target user.
+            String userHome = System.getProperty("user.home");
+            if (userHome == null) {
+                return null;
+            }
 
-        // Auto-detect from ~/.ssh
-        String userHome = System.getProperty("user.home");
-        if (userHome == null) {
-            return null;
-        }
-
-        String sshDir = userHome + "/.ssh";
-        for (String candidate : candidates) {
-            File key = new File(sshDir, candidate);
-            if (key.exists() && key.isFile()) {
-                log.info("Auto-detected SSH key: {}", key.getAbsolutePath());
-                return key.getAbsolutePath();
+            String sshDir = userHome + "/.ssh";
+            for (String candidate : candidates) {
+                File key = new File(sshDir, candidate);
+                if (key.exists() && key.isFile()) {
+                    log.info("Auto-detected SSH key: {}", key.getAbsolutePath());
+                    return key.getAbsolutePath();
+                }
             }
         }
 

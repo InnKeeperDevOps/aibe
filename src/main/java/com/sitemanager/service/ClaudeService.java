@@ -117,6 +117,57 @@ public class ClaudeService {
             ensureUserExists(claudeRunAsUser);
             log.info("Claude CLI subprocesses will run as user '{}' (current user is root)", claudeRunAsUser);
         }
+        resolveClaudeCliPath();
+    }
+
+    /**
+     * Resolve {@link #claudeCliPath} to an absolute path so ProcessBuilder does not
+     * depend on the JVM's PATH environment to locate the binary. If the configured
+     * value already contains a path separator, it is kept as-is. Otherwise we try
+     * {@code which <name>} on the configured value, falling back to common npm
+     * global install locations. Logs a warning if the binary cannot be found, but
+     * leaves the configured value untouched so callers still get a clear error.
+     */
+    private void resolveClaudeCliPath() {
+        if (claudeCliPath == null || claudeCliPath.isBlank()) {
+            return;
+        }
+        if (claudeCliPath.contains("/")) {
+            return;
+        }
+        try {
+            ProcessBuilder pb = new ProcessBuilder("which", claudeCliPath);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            int exit = p.waitFor();
+            if (exit == 0 && !output.isBlank()) {
+                String resolved = output.split("\\R")[0].trim();
+                if (new File(resolved).exists()) {
+                    log.info("Resolved Claude CLI '{}' to absolute path: {}", claudeCliPath, resolved);
+                    claudeCliPath = resolved;
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("`which {}` failed: {}", claudeCliPath, e.getMessage());
+        }
+        String[] candidates = {
+                "/usr/local/bin/" + claudeCliPath,
+                "/usr/bin/" + claudeCliPath,
+                "/opt/homebrew/bin/" + claudeCliPath,
+                "/root/.npm-global/bin/" + claudeCliPath,
+                "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+        };
+        for (String candidate : candidates) {
+            if (new File(candidate).exists()) {
+                log.info("Located Claude CLI at {}", candidate);
+                claudeCliPath = candidate;
+                return;
+            }
+        }
+        log.warn("Could not resolve absolute path for Claude CLI '{}' — relying on PATH lookup at exec time",
+                claudeCliPath);
     }
 
     /**

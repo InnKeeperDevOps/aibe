@@ -116,7 +116,7 @@ public class ClaudeService {
         // Claude CLI refuses --dangerously-skip-permissions when invoked as root.
         // If the process is running as root and no run-as user is configured,
         // default to "claude" so subprocesses are wrapped via runuser.
-        if ("root".equals(System.getProperty("user.name"))
+        if (isProcessRunningAsRoot()
                 && (claudeRunAsUser == null || claudeRunAsUser.isBlank())) {
             claudeRunAsUser = "claude";
             log.info("Process running as root with no app.claude-run-as-user configured; "
@@ -260,7 +260,41 @@ public class ClaudeService {
      */
     private boolean shouldRunAsDifferentUser() {
         return claudeRunAsUser != null && !claudeRunAsUser.isBlank()
-                && "root".equals(System.getProperty("user.name"));
+                && isProcessRunningAsRoot();
+    }
+
+    private volatile Boolean cachedIsRoot;
+
+    /**
+     * Detect whether the current JVM process is effectively running as root.
+     * Checks {@code user.name} first, then falls back to {@code id -u} so we
+     * still detect root in containers where the JVM's {@code user.name} system
+     * property doesn't reflect the actual effective uid. Result is cached
+     * because uid does not change during process lifetime.
+     */
+    private boolean isProcessRunningAsRoot() {
+        Boolean cached = cachedIsRoot;
+        if (cached != null) {
+            return cached;
+        }
+        if ("root".equals(System.getProperty("user.name"))) {
+            cachedIsRoot = Boolean.TRUE;
+            return true;
+        }
+        try {
+            ProcessBuilder pb = new ProcessBuilder("id", "-u");
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            int exit = p.waitFor();
+            boolean isRoot = exit == 0 && "0".equals(output);
+            cachedIsRoot = isRoot;
+            return isRoot;
+        } catch (Exception e) {
+            log.debug("Could not determine effective uid via `id -u`: {}", e.getMessage());
+            cachedIsRoot = Boolean.FALSE;
+            return false;
+        }
     }
 
     /**

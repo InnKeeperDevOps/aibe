@@ -11,6 +11,9 @@ import threading
 import json
 import hashlib
 import re
+import pty
+import select
+import errno
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -34,6 +37,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "site
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PID_FILE = "/tmp/site-manager-auto-update.pid"
 CLAUDE_LOG_FILE = os.path.join(SCRIPT_DIR, "claude-output.log")
+CLAUDE_CREDS_PATH = os.path.expanduser("~/.claude/.credentials.json")
 
 STATUS_COLORS = {
     "MERGED": "green",
@@ -334,6 +338,89 @@ def get_settings(conn):
     return {"site_name": "Site Manager", "claude_model": "unknown", "target_repo_url": ""}
 
 
+# ── Claude CLI auth persistence ─────────────────────────────────────
+
+def _ensure_claude_auth_table(conn):
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS claude_auth ("
+        "  id INTEGER PRIMARY KEY CHECK (id = 1),"
+        "  credentials_json TEXT NOT NULL,"
+        "  updated_at INTEGER NOT NULL"
+        ")"
+    )
+    conn.commit()
+
+
+def save_claude_credentials_from_disk() -> bool:
+    """Read ~/.claude/.credentials.json and persist it into sqlite."""
+    if not os.path.exists(CLAUDE_CREDS_PATH):
+        return False
+    with open(CLAUDE_CREDS_PATH, "r") as f:
+        creds = f.read()
+    if not creds.strip():
+        return False
+    conn = get_db()
+    try:
+        _ensure_claude_auth_table(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO claude_auth (id, credentials_json, updated_at) VALUES (1, ?, ?)",
+            (creds, int(time.time() * 1000)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return True
+
+
+def restore_claude_credentials_to_disk() -> bool:
+    """Write stored credentials back to ~/.claude/.credentials.json if needed."""
+    try:
+        conn = get_db()
+    except sqlite3.Error:
+        return False
+    try:
+        _ensure_claude_auth_table(conn)
+        c = conn.cursor()
+        c.execute("SELECT credentials_json FROM claude_auth WHERE id = 1")
+        row = c.fetchone()
+        if not row:
+            return False
+        creds = row[0]
+    finally:
+        conn.close()
+    existing = None
+    try:
+        if os.path.exists(CLAUDE_CREDS_PATH):
+            with open(CLAUDE_CREDS_PATH, "r") as f:
+                existing = f.read()
+    except OSError:
+        pass
+    if existing == creds:
+        return True
+    os.makedirs(os.path.dirname(CLAUDE_CREDS_PATH), exist_ok=True)
+    with open(CLAUDE_CREDS_PATH, "w") as f:
+        f.write(creds)
+    try:
+        os.chmod(CLAUDE_CREDS_PATH, 0o600)
+    except OSError:
+        pass
+    return True
+
+
+def has_stored_claude_credentials() -> bool:
+    try:
+        conn = get_db()
+    except sqlite3.Error:
+        return False
+    try:
+        _ensure_claude_auth_table(conn)
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM claude_auth WHERE id = 1")
+        return c.fetchone() is not None
+    finally:
+        conn.close()
+
+
 # ── Service management ───────────────────────────────────────────────
 
 def get_service_pid(svc_key):
@@ -529,6 +616,220 @@ class DetailScreen(ModalScreen):
         self.dismiss()
 
 
+class ClaudeLoginScreen(ModalScreen):
+    """Drives `claude login` interactively: surfaces the OAuth URL,
+    captures the user-supplied code, pipes it back into the live
+    subprocess, and persists the resulting credentials to sqlite."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    URL_RE = re.compile(r"https?://[^\s\x1b]+")
+    ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.master_fd: Optional[int] = None
+        self.proc: Optional[subprocess.Popen] = None
+        self.url: Optional[str] = None
+        self.output_buffer = ""
+        self.state = "starting"  # starting, awaiting_code, submitting, done, failed
+        self._reader_thread: Optional[threading.Thread] = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="login-container"):
+            yield Static("Claude CLI Login", id="login-title")
+            yield Static("Starting `claude login`...", id="login-status")
+            yield Static("", id="login-url")
+            yield Input(placeholder="Paste authorization code here", id="login-code-input", disabled=True)
+            with Horizontal(id="login-buttons"):
+                yield Button("Submit Code", id="login-submit-btn", variant="primary", disabled=True)
+                yield Button("Cancel [Esc]", id="login-cancel-btn")
+            yield RichLog(id="login-log", highlight=False, markup=False, max_lines=200)
+
+    def on_mount(self) -> None:
+        self._start_login()
+
+    @work(thread=True)
+    def _start_login(self) -> None:
+        try:
+            master_fd, slave_fd = pty.openpty()
+            env = os.environ.copy()
+            env["TERM"] = "dumb"
+            env["NO_COLOR"] = "1"
+            self.proc = subprocess.Popen(
+                ["claude", "login"],
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+                close_fds=True, env=env, cwd=SCRIPT_DIR,
+            )
+            os.close(slave_fd)
+            self.master_fd = master_fd
+        except FileNotFoundError:
+            self.call_from_thread(self._set_failed, "`claude` CLI not found on PATH")
+            return
+        except Exception as e:
+            self.call_from_thread(self._set_failed, f"Failed to start: {e}")
+            return
+        self._read_pty_loop()
+
+    def _read_pty_loop(self) -> None:
+        assert self.master_fd is not None and self.proc is not None
+        while True:
+            try:
+                rlist, _, _ = select.select([self.master_fd], [], [], 0.5)
+            except (OSError, ValueError):
+                break
+            if rlist:
+                try:
+                    data = os.read(self.master_fd, 4096)
+                except OSError as e:
+                    if e.errno == errno.EIO:
+                        break
+                    continue
+                if not data:
+                    break
+                self._handle_pty_chunk(data)
+            if self.proc.poll() is not None and not rlist:
+                break
+
+        try:
+            rc = self.proc.wait(timeout=2)
+        except Exception:
+            rc = self.proc.returncode if self.proc.returncode is not None else -1
+
+        if rc == 0:
+            self.call_from_thread(self._on_login_exit_success)
+        else:
+            self.call_from_thread(
+                self._set_failed,
+                f"`claude login` exited with code {rc}. See log below.",
+            )
+
+    def _handle_pty_chunk(self, data: bytes) -> None:
+        try:
+            text = data.decode("utf-8", errors="replace")
+        except Exception:
+            return
+        clean = self.ANSI_RE.sub("", text)
+        self.output_buffer += clean
+        self.call_from_thread(self._append_log, clean)
+        if self.url is None:
+            m = self.URL_RE.search(self.output_buffer)
+            if m:
+                self.url = m.group(0).rstrip(".,)\"'")
+                self.call_from_thread(self._on_url_found, self.url)
+
+    def _append_log(self, text: str) -> None:
+        try:
+            log = self.query_one("#login-log", RichLog)
+        except Exception:
+            return
+        for line in text.splitlines():
+            line = line.rstrip()
+            if line:
+                log.write(line)
+
+    def _on_url_found(self, url: str) -> None:
+        self.state = "awaiting_code"
+        try:
+            self.query_one("#login-url", Static).update(
+                Text.from_markup(
+                    "[bold cyan]1. Open this URL in your browser:[/]\n"
+                    f"[underline]{url}[/]\n"
+                    "[bold cyan]2. Sign in and copy the code shown.[/]"
+                )
+            )
+            self.query_one("#login-status", Static).update(
+                Text.from_markup("[yellow]Paste the code below, then press Enter or Submit.[/]")
+            )
+            inp = self.query_one("#login-code-input", Input)
+            inp.disabled = False
+            inp.focus()
+            self.query_one("#login-submit-btn", Button).disabled = False
+        except Exception:
+            pass
+
+    @on(Button.Pressed, "#login-submit-btn")
+    def on_submit_button(self) -> None:
+        self._submit_code()
+
+    @on(Input.Submitted, "#login-code-input")
+    def on_code_submit(self, event: Input.Submitted) -> None:
+        self._submit_code()
+
+    def _submit_code(self) -> None:
+        if self.master_fd is None or self.state != "awaiting_code":
+            return
+        inp = self.query_one("#login-code-input", Input)
+        code = inp.value.strip()
+        if not code:
+            return
+        try:
+            os.write(self.master_fd, (code + "\n").encode())
+        except OSError as e:
+            self._set_failed(f"Failed to send code: {e}")
+            return
+        self.state = "submitting"
+        inp.disabled = True
+        self.query_one("#login-submit-btn", Button).disabled = True
+        self.query_one("#login-status", Static).update(
+            Text.from_markup("[yellow]Submitting code, waiting for `claude login` to finish...[/]")
+        )
+
+    def _on_login_exit_success(self) -> None:
+        try:
+            stored = save_claude_credentials_from_disk()
+        except Exception as e:
+            self._set_failed(f"Login finished but failed to read credentials: {e}")
+            return
+        if not stored:
+            self._set_failed(
+                f"Login finished but no credentials at {CLAUDE_CREDS_PATH}"
+            )
+            return
+        self.state = "done"
+        self.query_one("#login-status", Static).update(
+            Text.from_markup("[green]Login complete. Credentials saved to sqlite.[/]")
+        )
+        self.set_timer(2.0, self.dismiss)
+
+    def _set_failed(self, msg: str) -> None:
+        self.state = "failed"
+        try:
+            self.query_one("#login-status", Static).update(
+                Text.from_markup(f"[red]{msg}[/]")
+            )
+        except Exception:
+            pass
+
+    def action_cancel(self) -> None:
+        self._cleanup()
+        self.dismiss()
+
+    @on(Button.Pressed, "#login-cancel-btn")
+    def on_cancel_button(self) -> None:
+        self.action_cancel()
+
+    def _cleanup(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.proc.terminate()
+            except OSError:
+                pass
+            try:
+                self.proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self.proc.kill()
+                except OSError:
+                    pass
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except OSError:
+                pass
+            self.master_fd = None
+
+
 CSS = """
 #detail-container {
     background: $surface;
@@ -631,6 +932,55 @@ DataTable {
 .error-status-new {
     color: red;
     text-style: bold;
+}
+
+#login-container {
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+    margin: 2 4;
+    height: auto;
+    max-height: 90vh;
+}
+
+#login-title {
+    text-style: bold;
+    color: $accent;
+    height: 1;
+    margin-bottom: 1;
+}
+
+#login-status {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#login-url {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#login-code-input {
+    margin-bottom: 1;
+}
+
+#login-buttons {
+    height: 3;
+    margin-bottom: 1;
+}
+
+#login-buttons Button {
+    margin-right: 1;
+}
+
+#login-log {
+    border: round $accent;
+    height: 12;
+    min-height: 6;
+}
+
+#login-claude-btn {
+    width: 22;
 }
 
 .error-status-fixing {
@@ -1099,6 +1449,7 @@ class SiteManagerApp(App):
                 with Horizontal(id="claude-input-row"):
                     yield Input(placeholder='Claude command (e.g. "check app logs")', id="claude-msg-input")
                     yield Button("Send", id="claude-send-btn", variant="primary")
+                    yield Button("Login to Claude", id="login-claude-btn")
                 yield RichLog(id="claude-log", highlight=True, markup=True)
 
             with TabPane("Claude", id="claude"):
@@ -1135,6 +1486,7 @@ class SiteManagerApp(App):
 
         t.append("\nCommand Bar (press Escape to focus)\n", style="bold underline")
         t.append("  c <msg>   ", style="bold cyan"); t.append("Send message to Claude\n")
+        t.append("  login     ", style="bold cyan"); t.append("Configure Claude CLI (OAuth login)\n")
         t.append("  v <id>    ", style="bold cyan"); t.append("View suggestion detail\n")
         t.append("  start <svc>    ", style="bold cyan"); t.append("Start service (app, extractor)\n")
         t.append("  stop <svc>     ", style="bold cyan"); t.append("Stop service\n")
@@ -1159,6 +1511,10 @@ class SiteManagerApp(App):
         return t
 
     def on_mount(self) -> None:
+        try:
+            restore_claude_credentials_to_disk()
+        except Exception:
+            pass
         self.set_interval(1, self._auto_refresh)
         self.set_interval(2, self._tick_claude_panel)
         self.set_interval(2, self._tick_fix_progress)
@@ -1819,6 +2175,10 @@ class SiteManagerApp(App):
             return
         self._process_command(cmd)
 
+    @on(Button.Pressed, "#login-claude-btn")
+    def open_claude_login(self) -> None:
+        self.push_screen(ClaudeLoginScreen())
+
     @on(Button.Pressed, "#claude-send-btn")
     def send_claude_services(self) -> None:
         inp = self.query_one("#claude-msg-input", Input)
@@ -1918,6 +2278,8 @@ class SiteManagerApp(App):
                 self._send_to_claude(msg)
         elif cmd_lower == "c":
             self.set_status("[dim]Use: c <message>[/]")
+        elif cmd_lower in ("login", "claude-login", "/login"):
+            self.push_screen(ClaudeLoginScreen())
         elif cmd_lower.startswith("fix "):
             error_hash = cmd_lower.split(None, 1)[1].strip()
             matched = None
@@ -2047,6 +2409,11 @@ class SiteManagerApp(App):
                 log_f.write(f"{'='*60}\n")
 
             self.call_from_thread(self._append_verbose_line, f"[bold yellow]>[/] {message}")
+
+            try:
+                restore_claude_credentials_to_disk()
+            except Exception:
+                pass
 
             proc = subprocess.Popen(
                 [

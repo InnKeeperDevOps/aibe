@@ -207,6 +207,22 @@ public class ClaudeService {
         if (!shouldRunAsDifferentUser()) {
             return true;
         }
+        // Skip the chown when the path is already owned by the target user.
+        // ensureUserExists() chowns the entire workspace once at startup, so most
+        // subsequent paths are already correctly owned and chowning them is
+        // redundant. In hardened containers where CAP_CHOWN is dropped, the
+        // redundant call would otherwise fail with EPERM ("Operation not
+        // permitted") and surface a misleading WARN even though ownership is
+        // already correct.
+        try {
+            java.nio.file.attribute.UserPrincipal owner = Files.getOwner(Path.of(pathStr));
+            if (owner != null && claudeRunAsUser.equals(owner.getName())) {
+                return true;
+            }
+        } catch (Exception ignored) {
+            // Could not read ownership (non-POSIX FS, path missing, etc.) —
+            // fall through and attempt the chown.
+        }
         try {
             ProcessBuilder chown = new ProcessBuilder(
                     "chown", claudeRunAsUser + ":" + claudeRunAsUser, pathStr);

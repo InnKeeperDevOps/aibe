@@ -1369,17 +1369,22 @@ public class ClaudeService {
 
         Process process = pb.start();
 
+        StringBuilder output = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
                 log.info("Git clone: {}", line);
             }
         }
 
         int exitCode = process.waitFor();
         if (exitCode != 0) {
-            throw new RuntimeException("Failed to clone repository: exit code " + exitCode);
+            String trimmed = output.toString().trim();
+            String suffix = trimmed.isEmpty() ? "" : ": " + trimmed;
+            throw new RuntimeException(
+                    "Failed to clone repository " + sshRepoUrl + ": exit code " + exitCode + suffix);
         }
 
         log.info("Repository cloned to {}", targetDir);

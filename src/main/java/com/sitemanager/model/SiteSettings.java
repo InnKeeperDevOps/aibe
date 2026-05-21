@@ -8,7 +8,9 @@ import jakarta.persistence.*;
 public class SiteSettings {
 
     public static final String DEFAULT_CLAUDE_CONFIG =
-            "{\"theme\":\"light\",\"hasCompletedOnboarding\":true}";
+            "{\"theme\":\"light\",\"hasCompletedOnboarding\":true,"
+            + "\"bypassPermissionsModeAccepted\":true,"
+            + "\"projects\":{\"/workspace\":{\"hasTrustDialogAccepted\":true,\"hasCompletedProjectOnboarding\":true}}}";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -173,6 +173,7 @@ public class ClaudeService {
             Files.writeString(configFile, configJson, StandardCharsets.UTF_8);
             chownToRunAsUser(configFile);
             log.info("Materialized Claude CLI config to {}", configFile);
+            markDirectoryTrusted(workspaceDir);
         } catch (Exception e) {
             log.warn("Failed to materialize Claude CLI config: {}", e.getMessage());
         }
@@ -1378,7 +1379,52 @@ public class ClaudeService {
         }
 
         log.info("Repository cloned to {}", targetDir);
+        markDirectoryTrusted(targetDir);
         return targetDir;
+    }
+
+    /**
+     * Mark {@code absolutePath} as trusted in {@code ~/.claude.json} so the CLI
+     * skips the interactive trust dialog when invoked with this directory as
+     * cwd. Idempotent — does nothing if the entry already exists.
+     */
+    public void markDirectoryTrusted(String absolutePath) {
+        if (absolutePath == null || absolutePath.isBlank()) {
+            return;
+        }
+        try {
+            Path configFile = Path.of(getClaudeCliHome(), ".claude.json");
+            com.fasterxml.jackson.databind.node.ObjectNode root;
+            if (Files.exists(configFile)) {
+                JsonNode parsed = objectMapper.readTree(configFile.toFile());
+                root = parsed.isObject()
+                        ? (com.fasterxml.jackson.databind.node.ObjectNode) parsed
+                        : objectMapper.createObjectNode();
+            } else {
+                root = objectMapper.createObjectNode();
+                Files.createDirectories(configFile.getParent());
+            }
+            com.fasterxml.jackson.databind.node.ObjectNode projects =
+                    root.has("projects") && root.get("projects").isObject()
+                            ? (com.fasterxml.jackson.databind.node.ObjectNode) root.get("projects")
+                            : root.putObject("projects");
+            com.fasterxml.jackson.databind.node.ObjectNode entry =
+                    projects.has(absolutePath) && projects.get(absolutePath).isObject()
+                            ? (com.fasterxml.jackson.databind.node.ObjectNode) projects.get(absolutePath)
+                            : projects.putObject(absolutePath);
+            boolean alreadyTrusted = entry.path("hasTrustDialogAccepted").asBoolean(false)
+                    && entry.path("hasCompletedProjectOnboarding").asBoolean(false);
+            if (alreadyTrusted) {
+                return;
+            }
+            entry.put("hasTrustDialogAccepted", true);
+            entry.put("hasCompletedProjectOnboarding", true);
+            Files.writeString(configFile, objectMapper.writeValueAsString(root), StandardCharsets.UTF_8);
+            chownToRunAsUser(configFile);
+            log.info("Marked {} as trusted in Claude CLI config", absolutePath);
+        } catch (Exception e) {
+            log.warn("Failed to mark {} as trusted in Claude config: {}", absolutePath, e.getMessage());
+        }
     }
 
     /**

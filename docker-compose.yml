@@ -20,31 +20,6 @@ services:
       - ${HOME}/.ssh:/root/.ssh:ro
     restart: unless-stopped
 
-  # Development service that polls for repo updates and restarts automatically.
-  # SSH_DEPLOY_KEY_PATH should point to a read-only deploy key for this repo only.
-  site-manager-dev:
-    image: gradle:8.14-jdk17
-    working_dir: /app
-    volumes:
-      - .:/app
-      - app-data:/data
-      - ${SSH_DEPLOY_KEY_PATH:-${HOME}/.ssh/id_rsa}:/root/.ssh/id_deploy:ro
-    environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - TARGET_REPO_URL=${TARGET_REPO_URL:-}
-      - GIT_SSH_KEY_PATH=${GIT_SSH_KEY_PATH:-}
-      - SPRING_DATASOURCE_URL=jdbc:sqlite:/data/aibe.db
-      - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.sqlite.JDBC
-      - SPRING_JPA_DATABASE_PLATFORM=org.hibernate.community.dialect.SQLiteDialect
-      - GIT_SSH_COMMAND=ssh -i /root/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new
-      - AUTO_UPDATE_BRANCH=${AUTO_UPDATE_BRANCH:-main}
-      - AUTO_UPDATE_INTERVAL=${AUTO_UPDATE_INTERVAL:-60}
-    command: ./auto-update.sh
-    ports:
-      - "8081:8080"
-    restart: unless-stopped
-
 volumes:
   app-data:
   workspace:

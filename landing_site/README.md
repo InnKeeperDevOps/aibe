@@ -8,7 +8,6 @@ Self-hosted AI suggestion management — installation and configuration guide.
 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [Starting with Auto-Update](#starting-with-auto-update)
 - [Configuring User Signups](#configuring-user-signups)
 - [Reviewing Suggestions](#reviewing-suggestions)
 - [Setting Up Slack Notifications](#setting-up-slack-notifications)
@@ -103,31 +102,6 @@ The application starts on port `8080` by default. Open `http://localhost:8080` i
 > **⚠️ WARNING — Do not run as root**
 >
 > Running this application as the `root` user gives the AI agent unrestricted filesystem access across your entire machine. This defeats OS-level process isolation and means a misbehaving or adversarial suggestion could read, modify, or delete any file on the system. Always run as a dedicated, unprivileged user account.
-
----
-
-## Starting with Auto-Update
-
-The included `auto-update.sh` script monitors the git upstream for new commits, polls at a configurable interval, and gracefully restarts the application when an update is detected.
-
-```bash
-chmod +x auto-update.sh
-./auto-update.sh
-```
-
-### Environment variables
-
-| Variable        | Default | Description                                    |
-|-----------------|---------|------------------------------------------------|
-| `BRANCH`        | `main`  | Git branch to track for updates                |
-| `POLL_INTERVAL` | `60`    | Seconds between upstream checks                |
-| `JAR_ARGS`      |         | Extra arguments passed to the JAR on startup   |
-
-Example with custom settings:
-
-```bash
-BRANCH=production POLL_INTERVAL=120 ./auto-update.sh
-```
 
 ---
 

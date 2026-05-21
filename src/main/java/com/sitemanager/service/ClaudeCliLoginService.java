@@ -85,13 +85,15 @@ public class ClaudeCliLoginService {
             startedAt = System.currentTimeMillis();
 
             String claudeCli = "claude";
-            // `script -qfec "claude login" /dev/null` allocates a PTY so the CLI
+            // `script -qfec "claude auth login" /dev/null` allocates a PTY so the CLI
             // sees a real terminal on stdin/stdout. -f flushes after each write,
             // -e propagates the wrapped command's exit code, -q is quiet.
+            // The subcommand is `auth login` (bare `claude login` opens the REPL
+            // and treats "login" as the prompt instead of authenticating).
             List<String> cmd = new ArrayList<>();
             cmd.add(scriptBinary);
             cmd.add("-qfec");
-            cmd.add(claudeCli + " login");
+            cmd.add(claudeCli + " auth login");
             cmd.add("/dev/null");
 
             String runAsUser = claudeService.getClaudeRunAsUser();

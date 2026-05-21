@@ -301,16 +301,47 @@ public class ClaudeService {
      * or no run-as user is configured.
      */
     private List<String> wrapCommandForUser(List<String> command) {
+        List<String> effective = injectGitSafeDirectory(command);
         if (!shouldRunAsDifferentUser()) {
-            return command;
+            return effective;
         }
         List<String> wrapped = new java.util.ArrayList<>();
         wrapped.add("runuser");
         wrapped.add("-u");
         wrapped.add(claudeRunAsUser);
         wrapped.add("--");
-        wrapped.addAll(command);
+        wrapped.addAll(effective);
         return wrapped;
+    }
+
+    /**
+     * When the command is a {@code git} invocation, inject
+     * {@code -c safe.directory=*} so git does not refuse to operate on
+     * repositories whose directory ownership differs from the current uid
+     * (e.g. when the workspace was created by root but git runs as the
+     * configured run-as user via {@code runuser}).
+     */
+    private List<String> injectGitSafeDirectory(List<String> command) {
+        if (command == null || command.isEmpty()) {
+            return command;
+        }
+        String first = command.get(0);
+        if (first == null) {
+            return command;
+        }
+        // Match bare "git" or any path ending in "/git".
+        boolean isGit = first.equals("git") || first.endsWith("/git");
+        if (!isGit) {
+            return command;
+        }
+        List<String> out = new java.util.ArrayList<>(command.size() + 2);
+        out.add(first);
+        out.add("-c");
+        out.add("safe.directory=*");
+        for (int i = 1; i < command.size(); i++) {
+            out.add(command.get(i));
+        }
+        return out;
     }
 
     /**

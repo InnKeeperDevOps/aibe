@@ -34,4 +34,12 @@ public class SettingsController {
         }
         return ResponseEntity.ok(settingsService.updateSettings(settings));
     }
+
+    @PostMapping("/git-ssh-key/generate")
+    public ResponseEntity<?> generateGitSshKey(HttpSession session) {
+        if (!permissionService.hasPermission(session, Permission.MANAGE_SETTINGS)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Admin access required"));
+        }
+        return ResponseEntity.ok(settingsService.generateSshKeyPair());
+    }
 }

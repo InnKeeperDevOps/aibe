@@ -1600,27 +1600,32 @@ public class ClaudeService {
                     !new String(Files.readAllBytes(keyFile), StandardCharsets.UTF_8).equals(normalized);
             if (needsWrite) {
                 Files.write(keyFile, normalized.getBytes(StandardCharsets.UTF_8));
-                Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rw-------");
-                try {
-                    Files.setPosixFilePermissions(keyFile, perms);
-                } catch (UnsupportedOperationException ignored) {
-                    // Non-POSIX filesystem; best-effort fall-through (key may still work)
-                }
-                // When subprocesses run as a different OS user, the key file must be
-                // readable by that user — chown it.
-                if (shouldRunAsDifferentUser()) {
-                    try {
-                        ProcessBuilder chownPb = new ProcessBuilder(
-                                "chown", claudeRunAsUser + ":" + claudeRunAsUser, keyFile.toString());
-                        chownPb.redirectErrorStream(true);
-                        Process chownProcess = chownPb.start();
-                        chownProcess.getInputStream().readAllBytes();
-                        chownProcess.waitFor();
-                    } catch (Exception e) {
-                        log.warn("Failed to chown settings SSH key to {}: {}", claudeRunAsUser, e.getMessage());
-                    }
-                }
                 log.info("Materialized settings SSH key at {}", keyFile);
+            }
+            // Always enforce 0600 and (when runuser-wrapping) ownership by the run-as
+            // user — even when the file already existed with matching content. A key
+            // file left over from a previous run where shouldRunAsDifferentUser was
+            // false (or where the run-as user was different) would otherwise stay
+            // root-owned with 0600, unreadable to the current run-as user, and ssh
+            // would fail silently with only "fatal: Could not read from remote
+            // repository." surfacing from git.
+            Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rw-------");
+            try {
+                Files.setPosixFilePermissions(keyFile, perms);
+            } catch (UnsupportedOperationException ignored) {
+                // Non-POSIX filesystem; best-effort fall-through (key may still work)
+            }
+            if (shouldRunAsDifferentUser()) {
+                try {
+                    ProcessBuilder chownPb = new ProcessBuilder(
+                            "chown", claudeRunAsUser + ":" + claudeRunAsUser, keyFile.toString());
+                    chownPb.redirectErrorStream(true);
+                    Process chownProcess = chownPb.start();
+                    chownProcess.getInputStream().readAllBytes();
+                    chownProcess.waitFor();
+                } catch (Exception e) {
+                    log.warn("Failed to chown settings SSH key to {}: {}", claudeRunAsUser, e.getMessage());
+                }
             }
             return keyFile.toString();
         } catch (Exception e) {

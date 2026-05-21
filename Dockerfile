@@ -14,8 +14,9 @@ RUN apt-get update && \
     apt-get install -y nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Claude CLI globally
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude CLI via the official installer
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
 COPY --from=build /app/build/libs/*.jar app.jar
 

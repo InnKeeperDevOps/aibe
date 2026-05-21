@@ -190,17 +190,40 @@ public class ClaudeService {
     }
 
     private void chownToRunAsUser(Path path) {
+        chownToRunAsUser(path.toString());
+    }
+
+    /**
+     * Chown {@code pathStr} to {@code claudeRunAsUser:claudeRunAsUser} when running
+     * as a different OS user. Returns true on success (or when no chown is needed),
+     * false on any failure — including a non-zero exit code from {@code chown}, which
+     * the previous implementation silently swallowed. Captures and logs the chown
+     * stderr at WARN level so silent failures (e.g. the user not existing, the
+     * filesystem refusing ownership changes, AppArmor/SELinux denials) become
+     * visible instead of surfacing only as git's generic
+     * "Could not read from remote repository."
+     */
+    private boolean chownToRunAsUser(String pathStr) {
         if (!shouldRunAsDifferentUser()) {
-            return;
+            return true;
         }
         try {
             ProcessBuilder chown = new ProcessBuilder(
-                    "chown", claudeRunAsUser + ":" + claudeRunAsUser, path.toString());
+                    "chown", claudeRunAsUser + ":" + claudeRunAsUser, pathStr);
             chown.redirectErrorStream(true);
             Process p = chown.start();
-            p.waitFor();
+            String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            int exit = p.waitFor();
+            if (exit != 0) {
+                log.warn("chown {} -> {}:{} failed (exit {}): {}",
+                        pathStr, claudeRunAsUser, claudeRunAsUser, exit,
+                        output.isEmpty() ? "(no output)" : output);
+                return false;
+            }
+            return true;
         } catch (Exception e) {
-            log.debug("chown {} -> {} failed: {}", path, claudeRunAsUser, e.getMessage());
+            log.warn("chown {} -> {} failed: {}", pathStr, claudeRunAsUser, e.getMessage());
+            return false;
         }
     }
 
@@ -1616,15 +1639,17 @@ public class ClaudeService {
                 // Non-POSIX filesystem; best-effort fall-through (key may still work)
             }
             if (shouldRunAsDifferentUser()) {
-                try {
-                    ProcessBuilder chownPb = new ProcessBuilder(
-                            "chown", claudeRunAsUser + ":" + claudeRunAsUser, keyFile.toString());
-                    chownPb.redirectErrorStream(true);
-                    Process chownProcess = chownPb.start();
-                    chownProcess.getInputStream().readAllBytes();
-                    chownProcess.waitFor();
-                } catch (Exception e) {
-                    log.warn("Failed to chown settings SSH key to {}: {}", claudeRunAsUser, e.getMessage());
+                if (!chownToRunAsUser(keyFile.toString())) {
+                    // The key file is still root-owned with 0600, so the run-as user
+                    // can't read it — returning the path here would surface only as
+                    // git's generic "Could not read from remote repository." Surface
+                    // a hard failure instead so the caller falls back to other keys
+                    // and the operator sees a clear error in logs.
+                    log.error("SSH key at {} could not be made readable by run-as user '{}' — "
+                                    + "git operations using this key will fail. Returning null so "
+                                    + "fallback key resolution runs.",
+                            keyFile, claudeRunAsUser);
+                    return null;
                 }
             }
             return keyFile.toString();
@@ -1658,16 +1683,7 @@ public class ClaudeService {
             log.debug("Could not set permissions on {}: {}", sshDir, e.getMessage());
         }
         if (runAsOther) {
-            try {
-                ProcessBuilder chownPb = new ProcessBuilder(
-                        "chown", claudeRunAsUser + ":" + claudeRunAsUser, sshDir.getAbsolutePath());
-                chownPb.redirectErrorStream(true);
-                Process chownProcess = chownPb.start();
-                chownProcess.getInputStream().readAllBytes();
-                chownProcess.waitFor();
-            } catch (Exception e) {
-                log.warn("Failed to chown {} to {}: {}", sshDir, claudeRunAsUser, e.getMessage());
-            }
+            chownToRunAsUser(sshDir.getAbsolutePath());
         }
     }
 

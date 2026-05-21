@@ -30,6 +30,19 @@ public class SiteSettingsService {
                 .orElseGet(() -> settingsRepository.save(new SiteSettings()));
     }
 
+    public SiteSettings generateSshKeyPair() {
+        SshKeyGenerator.GeneratedKey generated;
+        try {
+            generated = SshKeyGenerator.generate("aibe@" + java.time.Instant.now().toString());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate SSH key: " + e.getMessage(), e);
+        }
+        SiteSettings current = getSettings();
+        current.setGitSshKey(generated.privateKeyPem);
+        current.setGitSshPublicKey(generated.publicKeyAuthorized);
+        return settingsRepository.save(current);
+    }
+
     public SiteSettings updateSettings(SiteSettings updated) {
         SiteSettings current = getSettings();
         current.setAllowAnonymousSuggestions(updated.isAllowAnonymousSuggestions());
@@ -52,6 +65,10 @@ public class SiteSettingsService {
         // An explicit empty string clears the key.
         if (updated.getGitSshKey() != null) {
             current.setGitSshKey(updated.getGitSshKey().isBlank() ? null : updated.getGitSshKey());
+            // A pasted key replaces any previously-generated pair, so the stored public key
+            // no longer matches. Clear it so the UI doesn't surface a stale value; users who
+            // want a paired public key should use POST /git-ssh-key/generate.
+            current.setGitSshPublicKey(null);
         }
         // Claude credentials are managed exclusively via /api/claude-cli-login; never
         // clobber them from a generic settings update.

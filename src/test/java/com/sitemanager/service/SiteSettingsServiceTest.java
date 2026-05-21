@@ -180,4 +180,57 @@ class SiteSettingsServiceTest {
 
         assertTrue(result.isRegistrationsEnabled());
     }
+
+    @Test
+    void generateSshKeyPair_populatesPrivateAndPublicKeys() {
+        SiteSettings result = settingsService.generateSshKeyPair();
+
+        assertNotNull(result.getGitSshKey());
+        assertTrue(result.getGitSshKey().startsWith("-----BEGIN OPENSSH PRIVATE KEY-----\n"));
+        assertNotNull(result.getGitSshPublicKey());
+        assertTrue(result.getGitSshPublicKey().startsWith("ssh-ed25519 "));
+        assertTrue(result.hasGitSshKey());
+    }
+
+    @Test
+    void generateSshKeyPair_replacesPreviouslyStoredKey() {
+        SiteSettings first = settingsService.generateSshKeyPair();
+        SiteSettings second = settingsService.generateSshKeyPair();
+
+        assertNotEquals(first.getGitSshKey(), second.getGitSshKey());
+        assertNotEquals(first.getGitSshPublicKey(), second.getGitSshPublicKey());
+    }
+
+    @Test
+    void updateSettings_pastedPrivateKey_clearsStoredPublicKey() {
+        // Generate a paired key first so a public key is stored
+        settingsService.generateSshKeyPair();
+        assertNotNull(settingsService.getSettings().getGitSshPublicKey());
+
+        // User pastes their own private key — the stored public key should be cleared
+        // because we can't verify it matches the new private key.
+        SiteSettings paste = new SiteSettings();
+        paste.setGitSshKey("-----BEGIN OPENSSH PRIVATE KEY-----\nfake-pasted\n-----END OPENSSH PRIVATE KEY-----");
+        SiteSettings result = settingsService.updateSettings(paste);
+
+        assertEquals(
+                "-----BEGIN OPENSSH PRIVATE KEY-----\nfake-pasted\n-----END OPENSSH PRIVATE KEY-----",
+                result.getGitSshKey());
+        assertNull(result.getGitSshPublicKey());
+    }
+
+    @Test
+    void updateSettings_gitSshKeyOmitted_preservesGeneratedPublicKey() {
+        settingsService.generateSshKeyPair();
+        String storedPublic = settingsService.getSettings().getGitSshPublicKey();
+        assertNotNull(storedPublic);
+
+        // An update that does not touch the SSH key should leave the public key alone
+        SiteSettings update = new SiteSettings();
+        update.setSiteName("Renamed");
+        // gitSshKey left null → preserve existing pair
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals(storedPublic, result.getGitSshPublicKey());
+    }
 }

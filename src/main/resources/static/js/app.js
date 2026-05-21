@@ -131,6 +131,8 @@ import {
     loadAllUsers,
     assignUserGroup,
     saveSettings,
+    generateGitSshKey,
+    copyGitSshPublicKey,
     createAdmin,
 } from './modules/settings.js';
 
@@ -358,6 +360,8 @@ window.app = {
     loadAllUsers,
     assignUserGroup,
     saveSettings,
+    generateGitSshKey,
+    copyGitSshPublicKey,
     createAdmin,
 
     // claude cli login

@@ -34,6 +34,7 @@ export async function loadSettings() {
                 : 'Paste a private key to authenticate git operations (clone, pull, push). Leave blank to keep the existing key.';
         }
     }
+    _renderGitSshPublicKey(settings.gitSshPublicKey);
     await loadPendingUsers();
     await loadGroups();
     await loadAllUsers();
@@ -390,6 +391,50 @@ export async function assignUserGroup(userId, groupId) {
     if (data.error) { alert(data.error); }
 }
 
+function _renderGitSshPublicKey(publicKey) {
+    const box = document.getElementById('settingGitSshPublicKeyBox');
+    const textarea = document.getElementById('settingGitSshPublicKey');
+    if (!box || !textarea) return;
+    if (publicKey && publicKey.trim()) {
+        textarea.value = publicKey;
+        box.style.display = '';
+    } else {
+        textarea.value = '';
+        box.style.display = 'none';
+    }
+    const copyStatus = document.getElementById('settingGitSshPublicKeyCopyStatus');
+    if (copyStatus) copyStatus.textContent = '';
+}
+
+export async function generateGitSshKey() {
+    if (!window.confirm('Generate a new SSH key? This replaces any existing private key configured here.')) return;
+    const data = await api('/settings/git-ssh-key/generate', { method: 'POST' });
+    if (data.error) { alert(data.error); return; }
+    state.settings = data;
+    const sshKeyInput = document.getElementById('settingGitSshKey');
+    if (sshKeyInput) sshKeyInput.value = '';
+    const sshKeyStatus = document.getElementById('settingGitSshKeyStatus');
+    if (sshKeyStatus) {
+        sshKeyStatus.textContent = 'A key is currently configured. Paste a new key to replace it, or leave blank to keep the existing key.';
+    }
+    _renderGitSshPublicKey(data.gitSshPublicKey);
+    alert('SSH key generated. Copy the public key below into your git host (e.g. GitHub deploy keys).');
+}
+
+export async function copyGitSshPublicKey() {
+    const textarea = document.getElementById('settingGitSshPublicKey');
+    const status = document.getElementById('settingGitSshPublicKeyCopyStatus');
+    if (!textarea || !textarea.value) return;
+    try {
+        await navigator.clipboard.writeText(textarea.value);
+        if (status) status.textContent = 'Copied to clipboard.';
+    } catch (e) {
+        textarea.select();
+        document.execCommand('copy');
+        if (status) status.textContent = 'Copied to clipboard.';
+    }
+}
+
 export async function saveSettings() {
     const sshKeyEl = document.getElementById('settingGitSshKey');
     // Send the SSH key only when the textarea has content. Sending null preserves the
@@ -426,6 +471,7 @@ export async function saveSettings() {
             ? 'A key is currently configured. Paste a new key to replace it, or leave blank to keep the existing key.'
             : 'Paste a private key to authenticate git operations (clone, pull, push). Leave blank to keep the existing key.';
     }
+    _renderGitSshPublicKey(data.gitSshPublicKey);
     alert('Settings saved!');
 }
 

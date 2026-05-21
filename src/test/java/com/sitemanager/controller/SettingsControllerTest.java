@@ -240,6 +240,62 @@ class SettingsControllerTest {
     }
 
     @Test
+    void generateGitSshKey_asAdmin_returnsPublicKeyAndMarksKeyConfigured() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        mockMvc.perform(post("/api/settings/git-ssh-key/generate").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gitSshKey").doesNotExist())
+                .andExpect(jsonPath("$.hasGitSshKey").value(true))
+                .andExpect(jsonPath("$.gitSshPublicKey").exists())
+                .andExpect(jsonPath("$.gitSshPublicKey", org.hamcrest.Matchers.startsWith("ssh-ed25519 ")));
+    }
+
+    @Test
+    void generateGitSshKey_asNonAdmin_returns403() throws Exception {
+        mockMvc.perform(post("/api/settings/git-ssh-key/generate"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getSettings_afterGenerate_includesPublicKey() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        mockMvc.perform(post("/api/settings/git-ssh-key/generate").session(session))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasGitSshKey").value(true))
+                .andExpect(jsonPath("$.gitSshPublicKey",
+                        org.hamcrest.Matchers.startsWith("ssh-ed25519 ")));
+    }
+
+    @Test
+    void updateSettings_pastedPrivateKey_clearsStoredPublicKey() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        mockMvc.perform(post("/api/settings/git-ssh-key/generate").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gitSshPublicKey").exists());
+
+        String body = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"gitSshKey\":\"-----BEGIN OPENSSH PRIVATE KEY-----\\npasted\\n-----END OPENSSH PRIVATE KEY-----\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasGitSshKey").value(true))
+                .andExpect(jsonPath("$.gitSshPublicKey").doesNotExist());
+    }
+
+    @Test
     void getSettings_requireRegistrationApproval_reflectsPersistedValue() throws Exception {
         MockHttpSession session = new MockHttpSession();
         session.setAttribute("username", "admin");

@@ -979,8 +979,19 @@ DataTable {
     min-height: 6;
 }
 
-#login-claude-btn {
+#login-claude-btn, #login-claude-btn2, #login-claude-btn-dash {
     width: 22;
+}
+
+#dashboard-actions-row {
+    height: 3;
+    margin-top: 1;
+}
+
+.login-status-inline {
+    padding: 1 1 0 2;
+    height: auto;
+    width: 1fr;
 }
 
 .error-status-fixing {
@@ -1437,6 +1448,9 @@ class SiteManagerApp(App):
                 with Horizontal():
                     yield ErrorStatsWidget(self.error_manager, id="error-dashboard-panel", classes="stat-panel")
                     yield Static(id="error-recent-panel", classes="stat-panel")
+                with Horizontal(id="dashboard-actions-row"):
+                    yield Button("Login to Claude CLI", id="login-claude-btn-dash", variant="primary")
+                    yield Static(id="login-claude-status", classes="login-status-inline")
 
             with TabPane("Suggestions", id="suggestions"):
                 yield DataTable(id="suggestions-table", cursor_type="row")
@@ -1456,6 +1470,7 @@ class SiteManagerApp(App):
                 with Horizontal(id="claude-input-row"):
                     yield Input(placeholder="Send message to Claude...", id="claude-msg-input2")
                     yield Button("Send", id="claude-send-btn2", variant="primary")
+                    yield Button("Login to Claude", id="login-claude-btn2")
                 yield RichLog(id="claude-log2", highlight=True, markup=True)
 
             with TabPane("Errors", id="errors"):
@@ -1526,6 +1541,7 @@ class SiteManagerApp(App):
         self._refresh_recent_activity()
         self._refresh_claude_panel()
         self._refresh_error_displays()
+        self._refresh_login_status()
         self.query_one("#command-input", Input).focus()
 
     def _auto_refresh(self) -> None:
@@ -2176,8 +2192,30 @@ class SiteManagerApp(App):
         self._process_command(cmd)
 
     @on(Button.Pressed, "#login-claude-btn")
+    @on(Button.Pressed, "#login-claude-btn2")
+    @on(Button.Pressed, "#login-claude-btn-dash")
     def open_claude_login(self) -> None:
-        self.push_screen(ClaudeLoginScreen())
+        def _after(_result=None):
+            self._refresh_login_status()
+        self.push_screen(ClaudeLoginScreen(), _after)
+
+    def _refresh_login_status(self) -> None:
+        try:
+            stored = has_stored_claude_credentials()
+        except Exception:
+            stored = False
+        try:
+            widget = self.query_one("#login-claude-status", Static)
+        except Exception:
+            return
+        if stored:
+            widget.update(Text.from_markup(
+                "[green]Claude CLI: logged in (credentials in sqlite).[/]"
+            ))
+        else:
+            widget.update(Text.from_markup(
+                "[yellow]Claude CLI: not logged in — click the button to start OAuth.[/]"
+            ))
 
     @on(Button.Pressed, "#claude-send-btn")
     def send_claude_services(self) -> None:

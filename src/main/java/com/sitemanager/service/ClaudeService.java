@@ -1586,6 +1586,14 @@ public class ClaudeService {
                 log.warn("Failed to create directory for settings SSH key: {}", sshDir);
                 return null;
             }
+            // The .ssh directory is created by the JVM (running as root). Under a
+            // restrictive umask (e.g. 077, common in hardened containers) it ends up
+            // 0700 root-owned, which means the run-as user can't traverse it to read
+            // the key file inside — ssh then fails silently and git surfaces only
+            // "fatal: Could not read from remote repository." Force the dir to be
+            // accessible to the run-as user (chown + 0700) or world-traversable when
+            // git runs as the JVM user.
+            ensureSshDirAccessible(sshDir);
             Path keyFile = new File(sshDir, "settings_git_id").toPath();
 
             boolean needsWrite = !Files.exists(keyFile) ||
@@ -1618,6 +1626,43 @@ public class ClaudeService {
         } catch (Exception e) {
             log.error("Failed to materialize settings SSH key: {}", e.getMessage(), e);
             return null;
+        }
+    }
+
+    /**
+     * Ensure the .ssh directory under the workspace can be traversed by whoever
+     * runs git. When git runs as a different OS user via {@code runuser}, chown
+     * the dir to that user (and force 0700); otherwise force 0755 so the dir is
+     * always world-traversable. Without this, a 0700 root-owned dir created
+     * under a restrictive umask makes the inner key file unreadable to the
+     * run-as user, and ssh fails with no diagnostic beyond git's generic
+     * "Could not read from remote repository."
+     */
+    private void ensureSshDirAccessible(File sshDir) {
+        if (sshDir == null || !sshDir.exists()) {
+            return;
+        }
+        boolean runAsOther = shouldRunAsDifferentUser();
+        try {
+            Set<PosixFilePermission> perms = PosixFilePermissions.fromString(
+                    runAsOther ? "rwx------" : "rwxr-xr-x");
+            Files.setPosixFilePermissions(sshDir.toPath(), perms);
+        } catch (UnsupportedOperationException ignored) {
+            // non-POSIX filesystem
+        } catch (Exception e) {
+            log.debug("Could not set permissions on {}: {}", sshDir, e.getMessage());
+        }
+        if (runAsOther) {
+            try {
+                ProcessBuilder chownPb = new ProcessBuilder(
+                        "chown", claudeRunAsUser + ":" + claudeRunAsUser, sshDir.getAbsolutePath());
+                chownPb.redirectErrorStream(true);
+                Process chownProcess = chownPb.start();
+                chownProcess.getInputStream().readAllBytes();
+                chownProcess.waitFor();
+            } catch (Exception e) {
+                log.warn("Failed to chown {} to {}: {}", sshDir, claudeRunAsUser, e.getMessage());
+            }
         }
     }
 
@@ -1681,8 +1726,15 @@ public class ClaudeService {
         }
         String sshKeyPath = resolveGitSshKeyPath();
         if (sshKeyPath != null) {
+            // UserKnownHostsFile=/dev/null avoids known_hosts writes failing when
+            // the run-as-user's ~/.ssh isn't writable; BatchMode=yes makes ssh fail
+            // fast with a diagnostic instead of silently hanging on a hidden prompt.
             pb.environment().put("GIT_SSH_COMMAND",
-                    "ssh -i " + sshKeyPath + " -o StrictHostKeyChecking=no -o IdentitiesOnly=yes");
+                    "ssh -i " + sshKeyPath
+                            + " -o StrictHostKeyChecking=no"
+                            + " -o UserKnownHostsFile=/dev/null"
+                            + " -o IdentitiesOnly=yes"
+                            + " -o BatchMode=yes");
         }
     }
 

@@ -1083,10 +1083,14 @@ public class ClaudeService {
         }
 
         if (exitCode != 0) {
-            log.warn("{} non-zero exit code: {}", logPrefix, exitCode);
+            String outputSnippet = truncate(rawOutput, MAX_LOG_RESPONSE_LENGTH);
+            log.warn("{} non-zero exit code: {} output: {}", logPrefix, exitCode, outputSnippet);
             ClaudeFailureType failureType = classifyFailure(rawOutput, exitCode, null);
+            String detail = (rawOutput == null || rawOutput.isBlank())
+                    ? "(no output)"
+                    : truncate(rawOutput, 500);
             throw new ClaudeExecutionException(
-                    "Claude CLI exited with code " + exitCode,
+                    "Claude CLI exited with code " + exitCode + ": " + detail,
                     failureType, 1);
         }
 

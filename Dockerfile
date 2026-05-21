@@ -7,9 +7,10 @@ RUN gradle bootJar --no-daemon -x test
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 
-# Install Node.js (required by Claude CLI), git, and openssh-client for SSH-based cloning
+# Install Node.js (required by Claude CLI), git, openssh-client for SSH-based cloning,
+# and util-linux for the `script` PTY wrapper used by the Claude CLI login flow.
 RUN apt-get update && \
-    apt-get install -y curl git openssh-client && \
+    apt-get install -y curl git openssh-client util-linux && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*

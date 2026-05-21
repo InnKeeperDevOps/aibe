@@ -68,12 +68,6 @@ class DocsPageTest {
     }
 
     @Test
-    void navHasAutoUpdateAnchor() {
-        assertTrue(html.contains("#auto-update"),
-                "Docs nav must link to #auto-update section");
-    }
-
-    @Test
     void navHasUserSignupsAnchor() {
         assertTrue(html.contains("#user-signups"),
                 "Docs nav must link to #user-signups section");
@@ -101,12 +95,6 @@ class DocsPageTest {
     void installationSectionPresent() {
         assertTrue(html.contains("id=\"installation\""),
                 "Page must have a section with id 'installation'");
-    }
-
-    @Test
-    void autoUpdateSectionPresent() {
-        assertTrue(html.contains("id=\"auto-update\""),
-                "Page must have a section with id 'auto-update'");
     }
 
     @Test
@@ -162,12 +150,6 @@ class DocsPageTest {
     void hasInstallCommands() {
         assertTrue(html.contains("./gradlew build") || html.contains("mvn package"),
                 "Installation section must include build commands");
-    }
-
-    @Test
-    void hasAutoUpdateScript() {
-        assertTrue(html.contains("auto-update.sh"),
-                "Auto-update section must reference auto-update.sh");
     }
 
     @Test

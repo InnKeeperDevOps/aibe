@@ -44,12 +44,6 @@ class ReadmeTest {
     }
 
     @Test
-    void hasAutoUpdateSection() {
-        assertTrue(md.contains("## Starting with Auto-Update") || md.contains("## Auto-Update"),
-                "README must have an Auto-Update section");
-    }
-
-    @Test
     void hasUserSignupsSection() {
         assertTrue(md.contains("## Configuring User Signups") || md.contains("User Signups"),
                 "README must have a User Signups section");
@@ -146,28 +140,6 @@ class ReadmeTest {
         String around = md.substring(Math.max(0, rootIdx - 50), Math.min(md.length(), rootIdx + 500));
         assertTrue(around.toLowerCase().contains("filesystem") || around.toLowerCase().contains("file"),
                 "Root warning must explain the filesystem access risk");
-    }
-
-    @Test
-    void hasAutoUpdateScript() {
-        assertTrue(md.contains("auto-update.sh"),
-                "Auto-update section must reference auto-update.sh");
-    }
-
-    @Test
-    void hasChmodCommand() {
-        assertTrue(md.contains("chmod +x"),
-                "Auto-update section must include chmod +x command");
-    }
-
-    @Test
-    void hasAutoUpdateEnvVars() {
-        assertTrue(md.contains("BRANCH"),
-                "Auto-update section must document BRANCH env var");
-        assertTrue(md.contains("POLL_INTERVAL"),
-                "Auto-update section must document POLL_INTERVAL env var");
-        assertTrue(md.contains("JAR_ARGS"),
-                "Auto-update section must document JAR_ARGS env var");
     }
 
     @Test

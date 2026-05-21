@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { api } from './api.js';
 import { timeAgo } from './utils.js';
+import { refreshClaudeCliLogin } from './claudeCliLogin.js';
 
 export async function loadSettings() {
     const settings = await api('/settings');
@@ -36,6 +37,7 @@ export async function loadSettings() {
     await loadPendingUsers();
     await loadGroups();
     await loadAllUsers();
+    refreshClaudeCliLogin();
 }
 
 export async function loadGroups() {

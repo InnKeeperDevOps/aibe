@@ -135,6 +135,14 @@ import {
 } from './modules/settings.js';
 
 import {
+    refreshClaudeCliLogin,
+    startClaudeCliLogin,
+    submitClaudeCliCode,
+    cancelClaudeCliLogin,
+    clearClaudeCliCredentials,
+} from './modules/claudeCliLogin.js';
+
+import {
     loadDashboardView,
     renderLeaderboard,
     renderUserHistory,
@@ -351,6 +359,13 @@ window.app = {
     assignUserGroup,
     saveSettings,
     createAdmin,
+
+    // claude cli login
+    refreshClaudeCliLogin,
+    startClaudeCliLogin,
+    submitClaudeCliCode,
+    cancelClaudeCliLogin,
+    clearClaudeCliCredentials,
 
     // dashboard
     loadDashboardView,

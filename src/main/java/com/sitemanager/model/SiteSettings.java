@@ -60,6 +60,10 @@ public class SiteSettings {
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String gitSshKey;
 
+    @Column(name = "claude_credentials", columnDefinition = "TEXT")
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String claudeCredentials;
+
     public SiteSettings() {}
 
     public Long getId() { return id; }
@@ -96,9 +100,16 @@ public class SiteSettings {
     public void setRegistrationsEnabled(boolean v) { this.registrationsEnabled = v; }
     public String getGitSshKey() { return gitSshKey; }
     public void setGitSshKey(String v) { this.gitSshKey = v; }
+    public String getClaudeCredentials() { return claudeCredentials; }
+    public void setClaudeCredentials(String v) { this.claudeCredentials = v; }
 
     @JsonProperty("hasGitSshKey")
     public boolean hasGitSshKey() {
         return gitSshKey != null && !gitSshKey.isBlank();
+    }
+
+    @JsonProperty("hasClaudeCredentials")
+    public boolean hasClaudeCredentials() {
+        return claudeCredentials != null && !claudeCredentials.isBlank();
     }
 }

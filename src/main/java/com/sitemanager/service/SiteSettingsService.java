@@ -53,6 +53,8 @@ public class SiteSettingsService {
         if (updated.getGitSshKey() != null) {
             current.setGitSshKey(updated.getGitSshKey().isBlank() ? null : updated.getGitSshKey());
         }
+        // Claude credentials are managed exclusively via /api/claude-cli-login; never
+        // clobber them from a generic settings update.
         SiteSettings saved = settingsRepository.save(current);
 
         // Re-clone the target repository into main-repo/ so files are up to date

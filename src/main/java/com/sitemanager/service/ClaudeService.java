@@ -118,6 +118,50 @@ public class ClaudeService {
             log.info("Claude CLI subprocesses will run as user '{}' (current user is root)", claudeRunAsUser);
         }
         resolveClaudeCliPath();
+        materializeStoredClaudeCredentials();
+    }
+
+    /**
+     * If a Claude CLI credentials blob is stored in site_settings, write it to
+     * the run-as-user's ~/.claude/.credentials.json so Claude CLI subprocesses
+     * can authenticate without an interactive login.
+     */
+    public void materializeStoredClaudeCredentials() {
+        try {
+            SiteSettings settings = settingsRepository.findAll().stream().findFirst().orElse(null);
+            if (settings == null || !settings.hasClaudeCredentials()) {
+                return;
+            }
+            String credsJson = settings.getClaudeCredentials();
+            Path credsFile = Path.of(getClaudeCliHome(), ".claude", ".credentials.json");
+            Files.createDirectories(credsFile.getParent());
+            Files.writeString(credsFile, credsJson, StandardCharsets.UTF_8);
+            try {
+                Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rw-------");
+                Files.setPosixFilePermissions(credsFile, perms);
+            } catch (Exception ignored) {
+                // non-POSIX filesystem — best effort
+            }
+            chownToRunAsUser(credsFile);
+            log.info("Materialized stored Claude credentials to {}", credsFile);
+        } catch (Exception e) {
+            log.warn("Failed to materialize stored Claude credentials: {}", e.getMessage());
+        }
+    }
+
+    private void chownToRunAsUser(Path path) {
+        if (!shouldRunAsDifferentUser()) {
+            return;
+        }
+        try {
+            ProcessBuilder chown = new ProcessBuilder(
+                    "chown", claudeRunAsUser + ":" + claudeRunAsUser, path.toString());
+            chown.redirectErrorStream(true);
+            Process p = chown.start();
+            p.waitFor();
+        } catch (Exception e) {
+            log.debug("chown {} -> {} failed: {}", path, claudeRunAsUser, e.getMessage());
+        }
     }
 
     /**
@@ -1375,6 +1419,27 @@ public class ClaudeService {
      * {@code app.claude-run-as-user}). Returns null if not running as a different
      * user. Queries /etc/passwd via {@code getent} and falls back to /home/&lt;user&gt;.
      */
+    /**
+     * Public accessor: returns the home directory used by Claude CLI subprocesses.
+     * Falls back to the JVM's HOME (current user) when no run-as-user is configured.
+     */
+    public String getClaudeCliHome() {
+        String runAsHome = resolveRunAsUserHome();
+        if (runAsHome != null) {
+            return runAsHome;
+        }
+        String home = System.getenv("HOME");
+        return (home != null && !home.isBlank()) ? home : System.getProperty("user.home");
+    }
+
+    /**
+     * Returns the configured run-as-user (may be null/blank if the CLI runs as the
+     * current process user).
+     */
+    public String getClaudeRunAsUser() {
+        return claudeRunAsUser;
+    }
+
     private String resolveRunAsUserHome() {
         if (!shouldRunAsDifferentUser()) {
             return null;

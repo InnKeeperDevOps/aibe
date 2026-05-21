@@ -113,6 +113,16 @@ public class ClaudeService {
         this.timestampHead = 0;
         log.info("Claude CLI rate limiter initialized: maxConcurrent={}, maxCallsPerMinute={}, fifo=true",
                 claudeMaxConcurrent, claudeMaxCallsPerMinute);
+        // Claude CLI refuses --dangerously-skip-permissions when invoked as root.
+        // If the process is running as root and no run-as user is configured,
+        // default to "claude" so subprocesses are wrapped via runuser.
+        if ("root".equals(System.getProperty("user.name"))
+                && (claudeRunAsUser == null || claudeRunAsUser.isBlank())) {
+            claudeRunAsUser = "claude";
+            log.info("Process running as root with no app.claude-run-as-user configured; "
+                    + "defaulting to '{}' to satisfy Claude CLI --dangerously-skip-permissions restriction",
+                    claudeRunAsUser);
+        }
         if (shouldRunAsDifferentUser()) {
             ensureUserExists(claudeRunAsUser);
             log.info("Claude CLI subprocesses will run as user '{}' (current user is root)", claudeRunAsUser);

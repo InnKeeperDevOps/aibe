@@ -2463,7 +2463,8 @@ public class ClaudeService {
             String lower = rawOutput.toLowerCase();
             if (lower.contains("authentication") || lower.contains("unauthorized") ||
                     lower.contains("invalid api key") || lower.contains("model not found") ||
-                    lower.contains("model_not_found") || lower.contains("invalid_api_key")) {
+                    lower.contains("model_not_found") || lower.contains("invalid_api_key") ||
+                    lower.contains("not logged in") || lower.contains("please run /login")) {
                 return ClaudeFailureType.PERMANENT;
             }
         }

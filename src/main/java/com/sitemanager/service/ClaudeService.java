@@ -1080,6 +1080,15 @@ public class ClaudeService {
         long requestId = requestCounter.incrementAndGet();
         String logPrefix = String.format("[CLAUDE-REQ-%d][%s]", requestId, operationType);
 
+        // Pull the freshest credentials from site_settings before executing.
+        // The CLI rotates single-use OAuth refresh tokens, and the DB copy may
+        // have been refreshed since this pod started (by a re-login or another
+        // pod). Running with a stale disk copy whose refresh token was already
+        // spent yields "401 Invalid authentication credentials".
+        // materializeStoredClaudeCredentials() keeps the newer of disk/DB, so
+        // this is a no-op when the disk copy is already current.
+        materializeStoredClaudeCredentials();
+
         ClaudeExecutionException lastException = null;
         try {
             for (int attempt = 1; attempt <= claudeMaxRetries + 1; attempt++) {

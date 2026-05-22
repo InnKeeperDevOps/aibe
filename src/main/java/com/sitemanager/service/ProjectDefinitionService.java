@@ -17,7 +17,9 @@ import com.sitemanager.repository.UserRepository;
 import com.sitemanager.websocket.UserNotificationWebSocketHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -73,6 +75,14 @@ public class ProjectDefinitionService {
     @Value("${app.workspace-dir:/workspace}")
     private String workspaceDir;
 
+    /**
+     * Self-reference so the transactional {@link #createSession()} runs through
+     * the Spring proxy when invoked from the non-transactional {@link #startSession()}.
+     */
+    @Autowired
+    @Lazy
+    private ProjectDefinitionService self;
+
     public ProjectDefinitionService(ProjectDefinitionSessionRepository sessionRepository,
                                     ClaudeService claudeService,
                                     SiteSettingsService settingsService,
@@ -86,28 +96,41 @@ public class ProjectDefinitionService {
     }
 
     /**
-     * Start a new project definition interview session.
-     * Throws IllegalStateException if a non-terminal session already exists.
-     * Uses SERIALIZABLE isolation to prevent concurrent session creation.
+     * Atomically guard against concurrent interview sessions and create the
+     * ACTIVE session row. Kept deliberately short — it must NOT perform any
+     * long-running work (e.g. a Claude CLI call) because it holds a database
+     * connection (and a SERIALIZABLE lock) for its entire duration. With a
+     * small HikariCP pool, blocking inside this transaction exhausts the pool.
      */
     @Transactional(isolation = Isolation.SERIALIZABLE)
-    public ProjectDefinitionStateResponse startSession() {
+    public ProjectDefinitionSession createSession() {
         if (sessionRepository.findFirstByStatusIn(NON_TERMINAL_STATUSES).isPresent()) {
             throw new IllegalStateException("A project definition session is already in progress");
         }
-
-        String existingDefinition = readExistingProjectDefinition();
 
         ProjectDefinitionSession session = new ProjectDefinitionSession();
         session.setStatus(ProjectDefinitionStatus.ACTIVE);
         session.setClaudeSessionId(claudeService.generateSessionId());
         session.setConversationHistory("[]");
-        session.setHasExistingDefinition(existingDefinition != null);
-        session = sessionRepository.save(session);
+        session.setHasExistingDefinition(readExistingProjectDefinition() != null);
+        return sessionRepository.save(session);
+    }
+
+    /**
+     * Start a new project definition interview session.
+     * Throws IllegalStateException if a non-terminal session already exists.
+     * <p>
+     * The session row is created in a short SERIALIZABLE transaction
+     * ({@link #createSession()}); the subsequent Claude CLI call runs WITHOUT
+     * an open transaction so it does not pin a database connection for minutes
+     * and exhaust the connection pool.
+     */
+    public ProjectDefinitionStateResponse startSession() {
+        ProjectDefinitionSession session = self.createSession();
 
         final Long sessionId = session.getId();
         final String claudeSessionId = session.getClaudeSessionId();
-        final String prompt = buildInterviewPrompt(existingDefinition);
+        final String prompt = buildInterviewPrompt(readExistingProjectDefinition());
 
         try {
             String response = claudeService.continueConversation(claudeSessionId, prompt, null,

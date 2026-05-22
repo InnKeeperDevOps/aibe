@@ -20,7 +20,9 @@ import com.sitemanager.repository.SuggestionMessageRepository;
 import com.sitemanager.repository.SuggestionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
@@ -58,6 +60,17 @@ public class SuggestionService {
     private final SuggestionMessagingHelper messagingHelper;
     private final ExpertReviewService expertReviewService;
     private final PlanExecutionService planExecutionService;
+
+    /**
+     * Self-reference so the short {@code @Transactional} persistence methods run
+     * through the Spring proxy when invoked from the non-transactional public
+     * entry points. This keeps the long-running {@link #triggerAiEvaluation}
+     * (which performs a blocking git pull) OUTSIDE the transaction so it does
+     * not pin a database connection and exhaust the small HikariCP pool.
+     */
+    @Autowired
+    @Lazy
+    private SuggestionService self;
 
     public SuggestionService(SuggestionRepository suggestionRepository,
                              SuggestionMessageRepository messageRepository,
@@ -269,9 +282,31 @@ public class SuggestionService {
         return suggestionRepository.save(suggestion);
     }
 
-    @Transactional
+    /**
+     * Create a new suggestion. The database row is written in a short
+     * transaction ({@link #persistNewSuggestion}); the subsequent AI
+     * evaluation runs WITHOUT an open transaction so its blocking git pull
+     * does not pin a database connection and exhaust the connection pool.
+     */
     public Suggestion createSuggestion(String title, String description, Long authorId, String authorName,
                                        Priority priority, boolean isDraft) {
+        Suggestion suggestion = self.persistNewSuggestion(title, description, authorId, authorName,
+                priority, isDraft);
+
+        if (isDraft) {
+            // Saved as a user draft — skip AI evaluation and notifications
+            return suggestion;
+        }
+
+        // Trigger AI evaluation outside the transaction (blocking git pull)
+        triggerAiEvaluation(suggestion);
+
+        return suggestion;
+    }
+
+    @Transactional
+    public Suggestion persistNewSuggestion(String title, String description, Long authorId, String authorName,
+                                           Priority priority, boolean isDraft) {
         Suggestion suggestion = new Suggestion();
         suggestion.setTitle(title);
         suggestion.setDescription(description);
@@ -290,9 +325,6 @@ public class SuggestionService {
         // Add the initial description as the first message
         messagingHelper.addMessage(suggestion.getId(), SenderType.USER, suggestion.getAuthorName(),
                 "**" + title + "**\n\n" + description);
-
-        // Trigger AI evaluation asynchronously
-        triggerAiEvaluation(suggestion);
 
         return suggestion;
     }
@@ -317,8 +349,24 @@ public class SuggestionService {
         return suggestion;
     }
 
-    @Transactional
+    /**
+     * Submit a user draft for AI evaluation. The draft's initial message is
+     * persisted in a short transaction ({@link #prepareDraftForSubmission});
+     * the evaluation pipeline then runs WITHOUT an open transaction so its
+     * blocking git pull does not pin a database connection.
+     */
     public Suggestion submitDraft(Long id, String username) {
+        Suggestion suggestion = self.prepareDraftForSubmission(id, username);
+
+        // Run the same evaluation pipeline as a normal (non-draft) submission,
+        // outside the transaction (blocking git pull)
+        triggerAiEvaluation(suggestion);
+
+        return suggestion;
+    }
+
+    @Transactional
+    public Suggestion prepareDraftForSubmission(Long id, String username) {
         Suggestion suggestion = suggestionRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Suggestion not found: " + id));
         if (suggestion.getStatus() != SuggestionStatus.DRAFT) {
@@ -331,9 +379,6 @@ public class SuggestionService {
         // Add the initial description as the first message (skipped during draft creation)
         messagingHelper.addMessage(suggestion.getId(), SenderType.USER, suggestion.getAuthorName(),
                 "**" + suggestion.getTitle() + "**\n\n" + suggestion.getDescription());
-
-        // Run the same evaluation pipeline as a normal (non-draft) submission
-        triggerAiEvaluation(suggestion);
 
         return suggestion;
     }

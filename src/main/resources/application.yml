@@ -59,3 +59,7 @@ app:
   # When running as root, run Claude CLI and git subprocesses as this user instead.
   # The user must exist in the container. Leave empty to disable (run as current user).
   claude-run-as-user: ${CLAUDE_RUN_AS_USER:}
+  # Claude CLI subcommand driven by the interactive login flow. `setup-token` mints a
+  # long-lived, non-rotating token; `auth login` uses a rotating OAuth refresh token
+  # that goes stale once a stored copy is restored after a restart.
+  claude-login-command: ${CLAUDE_LOGIN_COMMAND:setup-token}

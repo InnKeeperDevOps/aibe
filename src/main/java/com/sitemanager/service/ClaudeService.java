@@ -133,6 +133,13 @@ public class ClaudeService {
     }
 
     /**
+     * Last-seen modification time of {@code ~/.claude/.credentials.json}, used to
+     * detect when the CLI has refreshed the OAuth tokens so the new copy can be
+     * persisted back to site_settings. Null until the first materialize/persist.
+     */
+    private volatile java.nio.file.attribute.FileTime lastCredentialsMtime;
+
+    /**
      * If a Claude CLI credentials blob is stored in site_settings, write it to
      * the run-as-user's ~/.claude/.credentials.json so Claude CLI subprocesses
      * can authenticate without an interactive login.
@@ -146,6 +153,22 @@ public class ClaudeService {
             String credsJson = settings.getClaudeCredentials();
             Path credsFile = Path.of(getClaudeCliHome(), ".claude", ".credentials.json");
             Files.createDirectories(credsFile.getParent());
+            // Don't clobber a disk credentials file that is newer than the stored
+            // copy: the CLI refreshes/rotates OAuth tokens on disk, and overwriting
+            // them with a stale DB copy (whose refresh token may already be spent)
+            // is exactly what produces "401 Invalid authentication credentials".
+            // If the disk file is newer, sync it into the DB instead.
+            if (Files.exists(credsFile)) {
+                String diskJson = Files.readString(credsFile, StandardCharsets.UTF_8);
+                if (extractCredentialExpiry(diskJson) > extractCredentialExpiry(credsJson)) {
+                    settings.setClaudeCredentials(diskJson);
+                    settingsRepository.save(settings);
+                    lastCredentialsMtime = Files.getLastModifiedTime(credsFile);
+                    log.info("Disk Claude credentials are newer than the stored copy; "
+                            + "kept disk file and updated site_settings");
+                    return;
+                }
+            }
             Files.writeString(credsFile, credsJson, StandardCharsets.UTF_8);
             try {
                 Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rw-------");
@@ -154,9 +177,63 @@ public class ClaudeService {
                 // non-POSIX filesystem — best effort
             }
             chownToRunAsUser(credsFile);
+            lastCredentialsMtime = Files.getLastModifiedTime(credsFile);
             log.info("Materialized stored Claude credentials to {}", credsFile);
         } catch (Exception e) {
             log.warn("Failed to materialize stored Claude credentials: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Parse the OAuth {@code expiresAt} epoch-millis out of a Claude credentials
+     * JSON blob. Returns -1 when absent or unparseable, so a missing/blank
+     * credential always sorts before a present one.
+     */
+    private long extractCredentialExpiry(String credsJson) {
+        if (credsJson == null || credsJson.isBlank()) {
+            return -1L;
+        }
+        try {
+            JsonNode exp = objectMapper.readTree(credsJson).path("claudeAiOauth").path("expiresAt");
+            return exp.isNumber() ? exp.asLong() : -1L;
+        } catch (Exception e) {
+            return -1L;
+        }
+    }
+
+    /**
+     * After a Claude CLI invocation, the CLI may have silently refreshed and
+     * rotated the OAuth tokens in {@code ~/.claude/.credentials.json}. Persist the
+     * updated file back to site_settings so it survives a pod restart — otherwise
+     * {@link #materializeStoredClaudeCredentials()} restores a stale copy whose
+     * refresh token has already been consumed, yielding
+     * "401 Invalid authentication credentials". Gated on the file mtime so the
+     * common (no-refresh) path never touches the database.
+     */
+    void persistRefreshedCredentialsIfChanged() {
+        try {
+            Path credsFile = Path.of(getClaudeCliHome(), ".claude", ".credentials.json");
+            if (!Files.exists(credsFile)) {
+                return;
+            }
+            java.nio.file.attribute.FileTime mtime = Files.getLastModifiedTime(credsFile);
+            java.nio.file.attribute.FileTime seen = lastCredentialsMtime;
+            if (seen != null && mtime.compareTo(seen) <= 0) {
+                return;
+            }
+            String json = Files.readString(credsFile, StandardCharsets.UTF_8);
+            if (json.isBlank()) {
+                return;
+            }
+            SiteSettings settings = settingsRepository.findAll().stream().findFirst().orElse(null);
+            if (settings != null && !json.equals(settings.getClaudeCredentials())) {
+                settings.setClaudeCredentials(json);
+                settingsRepository.save(settings);
+                log.info("Persisted refreshed Claude credentials to site_settings ({} bytes)", json.length());
+            }
+            lastCredentialsMtime = mtime;
+        } catch (Exception e) {
+            log.warn("Failed to persist refreshed Claude credentials: {}", e.getMessage());
         }
     }
 
@@ -1004,25 +1081,31 @@ public class ClaudeService {
         String logPrefix = String.format("[CLAUDE-REQ-%d][%s]", requestId, operationType);
 
         ClaudeExecutionException lastException = null;
-        for (int attempt = 1; attempt <= claudeMaxRetries + 1; attempt++) {
-            try {
-                return executeClaudeProcess(prompt, sessionId, workingDir, conversationContext,
-                        progressCallback, operationType, model, maxTurns, logPrefix);
-            } catch (ClaudeExecutionException e) {
-                lastException = e;
-                boolean isPermanent = e.getType() == ClaudeFailureType.PERMANENT;
-                boolean isLastAttempt = attempt > claudeMaxRetries;
-                if (isPermanent || isLastAttempt) {
-                    throw new ClaudeExecutionException(e.getMessage(), e.getType(), attempt);
+        try {
+            for (int attempt = 1; attempt <= claudeMaxRetries + 1; attempt++) {
+                try {
+                    return executeClaudeProcess(prompt, sessionId, workingDir, conversationContext,
+                            progressCallback, operationType, model, maxTurns, logPrefix);
+                } catch (ClaudeExecutionException e) {
+                    lastException = e;
+                    boolean isPermanent = e.getType() == ClaudeFailureType.PERMANENT;
+                    boolean isLastAttempt = attempt > claudeMaxRetries;
+                    if (isPermanent || isLastAttempt) {
+                        throw new ClaudeExecutionException(e.getMessage(), e.getType(), attempt);
+                    }
+                    long delay = computeRetryDelay(attempt);
+                    log.warn("{} transient failure on attempt {}/{}, retrying in {}ms: {}",
+                            logPrefix, attempt, claudeMaxRetries + 1, delay, e.getMessage());
+                    Thread.sleep(delay);
                 }
-                long delay = computeRetryDelay(attempt);
-                log.warn("{} transient failure on attempt {}/{}, retrying in {}ms: {}",
-                        logPrefix, attempt, claudeMaxRetries + 1, delay, e.getMessage());
-                Thread.sleep(delay);
             }
+            // Should never reach here, but satisfy compiler
+            throw lastException;
+        } finally {
+            // The CLI may have refreshed/rotated the OAuth tokens on disk during
+            // this call — capture them so a pod restart doesn't revert to a stale copy.
+            persistRefreshedCredentialsIfChanged();
         }
-        // Should never reach here, but satisfy compiler
-        throw lastException;
     }
 
     long computeRetryDelay(int attempt) {

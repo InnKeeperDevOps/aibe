@@ -42,6 +42,7 @@ public class ClaudeCliLoginService {
     private final ClaudeService claudeService;
     private final SiteSettingsRepository settingsRepository;
     private final String scriptBinary;
+    private final String loginCommand;
 
     private final Object lock = new Object();
     private Process process;
@@ -56,10 +57,12 @@ public class ClaudeCliLoginService {
 
     public ClaudeCliLoginService(ClaudeService claudeService,
                                  SiteSettingsRepository settingsRepository,
-                                 @Value("${app.claude-login-script-binary:script}") String scriptBinary) {
+                                 @Value("${app.claude-login-script-binary:script}") String scriptBinary,
+                                 @Value("${app.claude-login-command:setup-token}") String loginCommand) {
         this.claudeService = claudeService;
         this.settingsRepository = settingsRepository;
         this.scriptBinary = scriptBinary;
+        this.loginCommand = loginCommand;
     }
 
     public Map<String, Object> getStatusSnapshot() {
@@ -85,15 +88,17 @@ public class ClaudeCliLoginService {
             startedAt = System.currentTimeMillis();
 
             String claudeCli = "claude";
-            // `script -qfec "claude auth login" /dev/null` allocates a PTY so the CLI
-            // sees a real terminal on stdin/stdout. -f flushes after each write,
+            // `script -qfec "claude <loginCommand>" /dev/null` allocates a PTY so the
+            // CLI sees a real terminal on stdin/stdout. -f flushes after each write,
             // -e propagates the wrapped command's exit code, -q is quiet.
-            // The subcommand is `auth login` (bare `claude login` opens the REPL
-            // and treats "login" as the prompt instead of authenticating).
+            // Defaults to `setup-token`, which mints a long-lived, non-rotating token.
+            // `auth login` also works but yields an OAuth refresh token that rotates
+            // on every use, so a copy persisted to the DB goes stale and 401s after a
+            // pod restart restores it. Override via app.claude-login-command.
             List<String> cmd = new ArrayList<>();
             cmd.add(scriptBinary);
             cmd.add("-qfec");
-            cmd.add(claudeCli + " auth login");
+            cmd.add(claudeCli + " " + loginCommand);
             cmd.add("/dev/null");
 
             String runAsUser = claudeService.getClaudeRunAsUser();

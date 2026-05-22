@@ -734,6 +734,60 @@ public class SuggestionService {
         return suggestion;
     }
 
+    /**
+     * Restart the whole plan from task 1 against a fresh copy of the repository.
+     * Resets every plan task to PENDING and drops the working directory so
+     * {@link PlanExecutionService#executeApprovedSuggestion} re-clones the repo
+     * at {@code main} and recreates the suggestion branch — discarding any
+     * partial or broken work from the previous run.
+     */
+    public Suggestion restartPlanExecution(Long suggestionId) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId)
+                .orElseThrow(() -> new IllegalStateException("Suggestion not found"));
+
+        SuggestionStatus status = suggestion.getStatus();
+        boolean restartable = status == SuggestionStatus.IN_PROGRESS
+                || status == SuggestionStatus.TESTING
+                || status == SuggestionStatus.APPROVED
+                || status == SuggestionStatus.DEV_COMPLETE;
+        if (!restartable) {
+            throw new IllegalStateException(
+                    "The plan can only be restarted while the suggestion is being implemented");
+        }
+
+        log.info("[AI-FLOW] suggestion={} restarting full plan with a fresh repo (was: {})",
+                suggestionId, suggestion.getCurrentPhase());
+
+        // Reset every task back to PENDING so execution starts from task 1.
+        List<PlanTask> tasks = planTaskRepository.findBySuggestionIdOrderByTaskOrder(suggestionId);
+        for (PlanTask task : tasks) {
+            task.setStatus(TaskStatus.PENDING);
+            task.setRetryCount(0);
+            task.setFailureReason(null);
+            task.setStartedAt(null);
+            task.setCompletedAt(null);
+            task.setStatusDetail("Waiting to start");
+        }
+        planTaskRepository.saveAll(tasks);
+
+        // Drop the working directory so executeApprovedSuggestion re-clones a
+        // fresh copy of the repo at main and recreates the suggestion branch.
+        suggestion.setStatus(SuggestionStatus.APPROVED);
+        suggestion.setCurrentPhase("Restarting the plan from the beginning...");
+        suggestion.setFailureReason(null);
+        suggestion.setWorkingDirectory(null);
+        suggestionRepository.save(suggestion);
+        messagingHelper.broadcastUpdate(suggestion);
+        messagingHelper.broadcastTasks(suggestionId);
+
+        messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                "Restarting the implementation from the beginning with a fresh copy of the "
+                        + "repository (reset to main). All previous work on this suggestion is discarded.");
+
+        planExecutionService.executeApprovedSuggestion(suggestion);
+        return suggestion;
+    }
+
     public Map<String, Object> retryPrCreation(Long suggestionId) {
         return planExecutionService.retryPrCreation(suggestionId);
     }

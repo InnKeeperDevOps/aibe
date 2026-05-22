@@ -159,6 +159,11 @@ export async function loadDetail(id) {
     const canRetryExecution = isAdmin && suggestion.currentPhase && suggestion.currentPhase.includes('can retry');
     document.getElementById('retryExecutionActions').style.display = canRetryExecution ? '' : 'none';
 
+    // Restart plan action — available to admins while the plan is being implemented
+    const canRestartPlan = isAdmin && ['IN_PROGRESS', 'TESTING', 'DEV_COMPLETE'].includes(suggestion.status);
+    const restartPlanActions = document.getElementById('restartPlanActions');
+    if (restartPlanActions) restartPlanActions.style.display = canRestartPlan ? '' : 'none';
+
     // Reply box visibility
     const statusAllowsReply = ['DRAFT', 'DISCUSSING', 'PLANNED'].includes(suggestion.status);
     const hasReplyPermission = isAdmin || state.permissions.includes('REPLY');
@@ -301,6 +306,24 @@ export async function retryExecution() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Retry Execution';
+    }
+}
+
+export async function restartPlan() {
+    if (!confirm('This restarts the implementation from task 1 with a fresh copy of the repository (reset to main). All work done so far on this suggestion will be discarded. Continue?')) return;
+    const btn = document.querySelector('#restartPlanActions button');
+    btn.disabled = true;
+    btn.textContent = 'Restarting...';
+    try {
+        const result = await api('/suggestions/' + state.currentSuggestion + '/restart-plan', { method: 'POST' });
+        if (result && result.error) {
+            alert('Restart failed: ' + result.error);
+        }
+    } catch (e) {
+        alert('Restart failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Restart Plan (fresh repo)';
     }
 }
 

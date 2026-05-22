@@ -47,6 +47,7 @@ import {
     submitDenySuggestion,
     retryPr,
     retryExecution,
+    restartPlan,
     forceReApproval,
     vote,
 } from './modules/suggestionDetail.js';
@@ -280,6 +281,7 @@ window.app = {
     submitDenySuggestion,
     retryPr,
     retryExecution,
+    restartPlan,
     forceReApproval,
     vote,
 

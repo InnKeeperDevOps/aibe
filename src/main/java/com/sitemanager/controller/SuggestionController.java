@@ -299,6 +299,18 @@ public class SuggestionController {
         }
     }
 
+    @PostMapping("/{id}/restart-plan")
+    public ResponseEntity<?> restartPlan(@PathVariable Long id, HttpSession session) {
+        if (!permissionService.hasPermission(session, Permission.APPROVE_DENY_SUGGESTIONS)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Admin access required"));
+        }
+        try {
+            return ResponseEntity.ok(suggestionService.restartPlanExecution(id));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @PostMapping("/{id}/force-re-approval")
     public ResponseEntity<?> forceReApproval(@PathVariable Long id, HttpSession session) {
         if (!permissionService.hasPermission(session, Permission.APPROVE_DENY_SUGGESTIONS)) {

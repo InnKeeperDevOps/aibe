@@ -304,8 +304,13 @@ public class PlanExecutionService {
             return;
         }
 
+        // Pick the first task that isn't COMPLETED. Tasks run strictly in order
+        // and each builds on the previous one, so a FAILED task earlier in the
+        // plan blocks everything after it — execution must restart that task
+        // rather than skip ahead to a later PENDING task (which would run
+        // against a half-finished codebase and fail too).
         PlanTask nextTask = tasks.stream()
-                .filter(t -> t.getStatus() == TaskStatus.PENDING)
+                .filter(t -> t.getStatus() != TaskStatus.COMPLETED)
                 .findFirst()
                 .orElse(null);
 
@@ -324,6 +329,19 @@ public class PlanExecutionService {
             createPrAsync(suggestionId);
             tryStartNextQueuedSuggestion();
             return;
+        }
+
+        // A previously FAILED (or interrupted) task is restarted from a clean
+        // slate — fresh retry budget, cleared failure reason — instead of being
+        // skipped, so the plan resumes correctly from the point it broke.
+        if (nextTask.getStatus() != TaskStatus.PENDING) {
+            log.info("[AI-FLOW] suggestion={} restarting task {} (was {})",
+                    suggestionId, nextTask.getTaskOrder(), nextTask.getStatus());
+            messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                    "Restarting task " + nextTask.getTaskOrder() + " from the beginning...");
+            nextTask.setRetryCount(0);
+            nextTask.setFailureReason(null);
+            nextTask.setCompletedAt(null);
         }
 
         int totalTasks = tasks.size();

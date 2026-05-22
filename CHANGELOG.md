@@ -12,6 +12,7 @@
 - **Changelog display**: Completed suggestions show the auto-generated changelog entry in the detail view
 - **GitHub Token setting**: New "GitHub Token" field in Settings to enable automatic PR creation (optional — branch push still works without it)
 - **Real-time PR notification**: WebSocket `pr_created` event updates the UI immediately when a PR is created
+- **Claude CLI Logs (admin)**: New admin-only "Claude Logs" page listing every Claude CLI invocation — the full prompt sent and the raw output returned, with command, model, exit code and duration. Backed by a new `claude_cli_logs` table populated on every CLI call (`GET /api/claude-logs`)
 
 ### Changed
 - `handleExecutionResult` now triggers the push/PR workflow asynchronously after execution completes

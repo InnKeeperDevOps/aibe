@@ -119,6 +119,11 @@ import {
 } from './modules/projectDefinition.js';
 
 import {
+    loadClaudeLogs,
+    viewClaudeLog,
+} from './modules/claudeLogs.js';
+
+import {
     loadSettings,
     loadGroups,
     editGroup,
@@ -227,6 +232,7 @@ registerNavigationCallbacks({
     loadDashboardView,
     loadDetail,
     loadSettings,
+    loadClaudeLogs,
     disconnectWs,
     updateSaveAsDraftBtn: () => {
         const btn = document.getElementById('saveAsDraftBtn');
@@ -347,6 +353,10 @@ window.app = {
     formatFileSize,
     submitImportDefinition,
     onProjectDefinitionUpdate,
+
+    // claude logs
+    loadClaudeLogs,
+    viewClaudeLog,
 
     // settings / admin
     loadSettings,

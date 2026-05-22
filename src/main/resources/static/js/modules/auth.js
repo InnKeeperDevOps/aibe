@@ -36,18 +36,22 @@ export function updateHeader() {
     const loginBtn = document.getElementById('loginBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const settingsBtn = document.getElementById('settingsBtn');
+    const claudeLogsBtn = document.getElementById('claudeLogsBtn');
 
     if (loggedIn) {
         badge.textContent = username + ' (' + role + ')';
         badge.style.display = '';
         loginBtn.style.display = 'none';
         logoutBtn.style.display = '';
-        settingsBtn.style.display = (role === 'ROOT_ADMIN' || role === 'ADMIN') ? '' : 'none';
+        const isAdmin = (role === 'ROOT_ADMIN' || role === 'ADMIN');
+        settingsBtn.style.display = isAdmin ? '' : 'none';
+        if (claudeLogsBtn) claudeLogsBtn.style.display = isAdmin ? '' : 'none';
     } else {
         badge.style.display = 'none';
         loginBtn.style.display = '';
         logoutBtn.style.display = 'none';
         settingsBtn.style.display = 'none';
+        if (claudeLogsBtn) claudeLogsBtn.style.display = 'none';
     }
     updateNewSuggestionBtn();
     updateAiRecommendationsBtn();

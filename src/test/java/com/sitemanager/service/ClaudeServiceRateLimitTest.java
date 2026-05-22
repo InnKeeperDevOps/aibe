@@ -1,6 +1,7 @@
 package com.sitemanager.service;
 
 import com.sitemanager.repository.SiteSettingsRepository;
+import com.sitemanager.repository.ClaudeCliLogRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,9 @@ class ClaudeServiceRateLimitTest {
 
     @Mock
     private SiteSettingsRepository settingsRepository;
+
+    @Mock
+    private ClaudeCliLogRepository cliLogRepository;
 
     @InjectMocks
     private ClaudeService claudeService;
@@ -82,7 +86,7 @@ class ClaudeServiceRateLimitTest {
     void defaultCallsPerMinute_isTen() {
         // A freshly constructed service (before initRateLimiter is called) initialises its
         // circular buffer with 10 slots — the application-level default for calls per minute.
-        ClaudeService freshService = new ClaudeService(settingsRepository);
+        ClaudeService freshService = new ClaudeService(settingsRepository, cliLogRepository);
         long[] timestamps = (long[]) ReflectionTestUtils.getField(freshService, "callTimestamps");
         assertNotNull(timestamps);
         assertEquals(10, timestamps.length, "Default call-buffer size should be 10");

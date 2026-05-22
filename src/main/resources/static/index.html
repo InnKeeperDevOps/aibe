@@ -17,6 +17,8 @@
                     onclick="app.openProjectDefinition()">Project Definition</button>
             <button id="dashboardBtn" class="btn btn-outline btn-sm"
                     onclick="app.navigate('dashboard')">Dashboard</button>
+            <button id="claudeLogsBtn" class="btn btn-outline btn-sm" style="display:none"
+                    onclick="app.navigate('claudeLogs')">Claude Logs</button>
             <button id="settingsBtn" class="btn btn-outline btn-sm" style="display:none"
                     onclick="app.navigate('settings')">Settings</button>
             <button id="loginBtn" class="btn btn-outline btn-sm" onclick="app.navigate('login')">Login</button>
@@ -428,6 +430,33 @@
             <h3 id="historyUsername"></h3>
             <div id="historyList"></div>
         </div>
+    </div>
+
+    <!-- Claude Logs View -->
+    <div id="claudeLogsView" class="view" style="display:none">
+        <span class="back-btn" onclick="app.navigate('list')">&larr; Back</span>
+        <h2>Claude CLI Logs</h2>
+        <p style="color:var(--text-muted);font-size:0.9rem;margin-top:0.25rem">
+            Every prompt sent to the Claude CLI and the raw output it returned — all inputs and
+            outputs. Showing the most recent 500 invocations. Click a row for the full prompt and response.
+        </p>
+        <button class="btn btn-outline btn-sm" onclick="app.loadClaudeLogs()"
+                style="margin-bottom:1rem">Refresh</button>
+        <div id="claudeLogsError" style="display:none;color:var(--danger);margin-bottom:1rem"></div>
+        <table style="width:100%;border-collapse:collapse">
+            <thead>
+                <tr>
+                    <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Time</th>
+                    <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Operation</th>
+                    <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Model</th>
+                    <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Exit</th>
+                    <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Duration</th>
+                    <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Prompt</th>
+                </tr>
+            </thead>
+            <tbody id="claudeLogsBody"></tbody>
+        </table>
+        <div id="claudeLogDetail" class="card" style="display:none;margin-top:1.5rem"></div>
     </div>
 
     <!-- Settings View -->

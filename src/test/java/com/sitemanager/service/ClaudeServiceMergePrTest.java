@@ -1,6 +1,7 @@
 package com.sitemanager.service;
 
 import com.sitemanager.repository.SiteSettingsRepository;
+import com.sitemanager.repository.ClaudeCliLogRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +26,9 @@ class ClaudeServiceMergePrTest {
     private SiteSettingsRepository settingsRepository;
 
     @Mock
+    private ClaudeCliLogRepository cliLogRepository;
+
+    @Mock
     private HttpClient httpClient;
 
     @Mock
@@ -39,7 +43,7 @@ class ClaudeServiceMergePrTest {
 
     @BeforeEach
     void setUp() {
-        service = new ClaudeService(settingsRepository);
+        service = new ClaudeService(settingsRepository, cliLogRepository);
     }
 
     @SuppressWarnings("unchecked")

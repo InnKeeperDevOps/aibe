@@ -8,6 +8,7 @@ const _callbacks = {
     loadDashboardView: () => {},
     loadDetail: () => {},
     loadSettings: () => {},
+    loadClaudeLogs: () => {},
     disconnectWs: () => {},
     updateSaveAsDraftBtn: () => {},
 };
@@ -58,6 +59,7 @@ export function navigate(view, data) {
         case 'dashboard': _callbacks.loadDashboardView(); break;
         case 'detail': _callbacks.loadDetail(data); break;
         case 'settings': _callbacks.loadSettings(); break;
+        case 'claudeLogs': _callbacks.loadClaudeLogs(); break;
         case 'login': {
             const regDisabled = state.settings.registrationsEnabled === false;
             const createLink = document.getElementById('createAccountLink');

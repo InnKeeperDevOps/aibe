@@ -2,6 +2,7 @@ package com.sitemanager.service;
 
 import com.sitemanager.model.enums.ExpertRole;
 import com.sitemanager.repository.SiteSettingsRepository;
+import com.sitemanager.repository.ClaudeCliLogRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,6 +25,9 @@ class ClaudeServiceExpertReviewPromptTest {
     @Mock
     private SiteSettingsRepository settingsRepository;
 
+    @Mock
+    private ClaudeCliLogRepository cliLogRepository;
+
     private ClaudeService service;
 
     private static final String TITLE = "Add dark mode";
@@ -34,7 +38,7 @@ class ClaudeServiceExpertReviewPromptTest {
 
     @BeforeEach
     void setUp() {
-        service = new ClaudeService(settingsRepository);
+        service = new ClaudeService(settingsRepository, cliLogRepository);
     }
 
     // -------------------------------------------------------------------------

@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.sitemanager.model.ClaudeCliLog;
 import com.sitemanager.model.SiteSettings;
 import com.sitemanager.model.enums.ExpertRole;
+import com.sitemanager.repository.ClaudeCliLogRepository;
 import com.sitemanager.repository.SiteSettingsRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,6 +55,10 @@ public class ClaudeService {
     private final Semaphore claudeGate;
 
     private final SiteSettingsRepository settingsRepository;
+    private final ClaudeCliLogRepository cliLogRepository;
+
+    /** Per-text-field cap for persisted CLI logs, guarding against pathological DB bloat. */
+    private static final int MAX_CLI_LOG_FIELD = 200_000;
 
     @Value("${app.claude-cli-path:claude}")
     private String claudeCliPath;
@@ -96,8 +102,10 @@ public class ClaudeService {
     @Value("${app.claude-retry-max-delay-ms:30000}")
     private long claudeRetryMaxDelayMs;
 
-    public ClaudeService(SiteSettingsRepository settingsRepository) {
+    public ClaudeService(SiteSettingsRepository settingsRepository,
+                         ClaudeCliLogRepository cliLogRepository) {
         this.settingsRepository = settingsRepository;
+        this.cliLogRepository = cliLogRepository;
         // Defaults; @PostConstruct re-inits with configured values
         this.claudeGate = new Semaphore(2, true); // fair = FIFO ordering
         this.callTimestamps = new long[10];
@@ -264,6 +272,57 @@ public class ClaudeService {
         } catch (Exception e) {
             log.warn("Failed to materialize Claude CLI config: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Persist one Claude CLI invocation — the prompt/command sent and the raw
+     * output returned — for the admin Claude Logs page. Best-effort: a logging
+     * failure must never break or fail the actual CLI execution.
+     */
+    private void persistCliLog(long requestId, String operationType, List<String> command,
+                               String prompt, String model, String workingDir,
+                               String rawOutput, int exitCode, long durationMs) {
+        try {
+            ClaudeCliLog entry = new ClaudeCliLog();
+            entry.setRequestId(requestId);
+            entry.setOperationType(operationType);
+            entry.setModel((model != null && !model.isBlank()) ? model : "default");
+            entry.setWorkingDir(workingDir);
+            entry.setCommand(capLogField(maskPromptInCommand(command, prompt)));
+            entry.setPrompt(capLogField(prompt));
+            entry.setRawOutput(capLogField(rawOutput));
+            entry.setExitCode(exitCode);
+            entry.setDurationMs(durationMs);
+            cliLogRepository.save(entry);
+        } catch (Exception e) {
+            log.warn("[CLAUDE-REQ-{}] Failed to persist CLI log: {}", requestId, e.getMessage());
+        }
+    }
+
+    /**
+     * Render the CLI command as a single line, replacing the (potentially huge)
+     * prompt argument with a {@code <prompt: N chars>} placeholder so the stored
+     * command stays readable and the prompt is not duplicated.
+     */
+    private static String maskPromptInCommand(List<String> command, String prompt) {
+        if (command == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (String arg : command) {
+            if (sb.length() > 0) sb.append(' ');
+            if (prompt != null && prompt.equals(arg)) {
+                sb.append("<prompt: ").append(prompt.length()).append(" chars>");
+            } else {
+                sb.append(arg);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String capLogField(String s) {
+        if (s == null) return null;
+        return s.length() > MAX_CLI_LOG_FIELD
+                ? s.substring(0, MAX_CLI_LOG_FIELD) + "\n…(truncated, " + s.length() + " chars total)"
+                : s;
     }
 
     private void chownToRunAsUser(Path path) {
@@ -1094,7 +1153,7 @@ public class ClaudeService {
             for (int attempt = 1; attempt <= claudeMaxRetries + 1; attempt++) {
                 try {
                     return executeClaudeProcess(prompt, sessionId, workingDir, conversationContext,
-                            progressCallback, operationType, model, maxTurns, logPrefix);
+                            progressCallback, operationType, model, maxTurns, logPrefix, requestId);
                 } catch (ClaudeExecutionException e) {
                     lastException = e;
                     boolean isPermanent = e.getType() == ClaudeFailureType.PERMANENT;
@@ -1128,7 +1187,7 @@ public class ClaudeService {
                                         String conversationContext,
                                         Consumer<String> progressCallback,
                                         String operationType, String model, int maxTurns,
-                                        String logPrefix) throws Exception {
+                                        String logPrefix, long requestId) throws Exception {
         long startTime = System.currentTimeMillis();
 
         // Expert reviews and feedback always get a fresh session (no resume)
@@ -1222,6 +1281,8 @@ public class ClaudeService {
             long elapsed = System.currentTimeMillis() - startTime;
             log.error("{} TIMEOUT after {}ms (limit={}min) — process killed",
                     logPrefix, elapsed, claudeTimeoutMinutes);
+            persistCliLog(requestId, operationType, command, prompt, model, workingDir,
+                    output.toString().trim() + "\n(process killed — timed out)", -1, elapsed);
             throw new ClaudeExecutionException(
                     "Claude CLI timed out after " + claudeTimeoutMinutes + " minutes",
                     ClaudeFailureType.TRANSIENT, 1);
@@ -1234,6 +1295,10 @@ public class ClaudeService {
         // Log raw output size and timing
         log.info("{} completed in {}ms exitCode={} responseLength={}",
                 logPrefix, elapsed, exitCode, rawOutput.length());
+
+        // Persist the full prompt/command/output for the admin Claude Logs page.
+        persistCliLog(requestId, operationType, command, prompt, model, workingDir,
+                rawOutput, exitCode, elapsed);
 
         // Try to parse as JSON to extract session_id and result
         String resultText = rawOutput;

@@ -1619,54 +1619,42 @@ public class ClaudeService {
         // SSH refuses keys without a trailing newline
         String normalized = keyContent.endsWith("\n") ? keyContent : keyContent + "\n";
 
+        if (shouldRunAsDifferentUser()) {
+            return materializeSettingsSshKeyForRunAsUser(normalized);
+        }
+        return materializeSettingsSshKeyForCurrentUser(normalized);
+    }
+
+    /**
+     * Materialize the settings SSH key when subprocesses run as the JVM's own
+     * user: the JVM can create and read the file directly, so no ownership
+     * change is needed.
+     */
+    private String materializeSettingsSshKeyForCurrentUser(String normalized) {
         try {
             File sshDir = new File(workspaceDir, ".ssh");
             if (!sshDir.exists() && !sshDir.mkdirs()) {
                 log.warn("Failed to create directory for settings SSH key: {}", sshDir);
                 return null;
             }
-            // The .ssh directory is created by the JVM (running as root). Under a
-            // restrictive umask (e.g. 077, common in hardened containers) it ends up
-            // 0700 root-owned, which means the run-as user can't traverse it to read
-            // the key file inside — ssh then fails silently and git surfaces only
-            // "fatal: Could not read from remote repository." Force the dir to be
-            // accessible to the run-as user (chown + 0700) or world-traversable when
-            // git runs as the JVM user.
-            ensureSshDirAccessible(sshDir);
+            try {
+                Files.setPosixFilePermissions(sshDir.toPath(),
+                        PosixFilePermissions.fromString("rwx------"));
+            } catch (UnsupportedOperationException ignored) {
+                // Non-POSIX filesystem; best-effort fall-through
+            }
             Path keyFile = new File(sshDir, "settings_git_id").toPath();
-
             boolean needsWrite = !Files.exists(keyFile) ||
                     !new String(Files.readAllBytes(keyFile), StandardCharsets.UTF_8).equals(normalized);
             if (needsWrite) {
                 Files.write(keyFile, normalized.getBytes(StandardCharsets.UTF_8));
                 log.info("Materialized settings SSH key at {}", keyFile);
             }
-            // Always enforce 0600 and (when runuser-wrapping) ownership by the run-as
-            // user — even when the file already existed with matching content. A key
-            // file left over from a previous run where shouldRunAsDifferentUser was
-            // false (or where the run-as user was different) would otherwise stay
-            // root-owned with 0600, unreadable to the current run-as user, and ssh
-            // would fail silently with only "fatal: Could not read from remote
-            // repository." surfacing from git.
-            Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rw-------");
             try {
-                Files.setPosixFilePermissions(keyFile, perms);
+                Files.setPosixFilePermissions(keyFile,
+                        PosixFilePermissions.fromString("rw-------"));
             } catch (UnsupportedOperationException ignored) {
                 // Non-POSIX filesystem; best-effort fall-through (key may still work)
-            }
-            if (shouldRunAsDifferentUser()) {
-                if (!chownToRunAsUser(keyFile.toString())) {
-                    // The key file is still root-owned with 0600, so the run-as user
-                    // can't read it — returning the path here would surface only as
-                    // git's generic "Could not read from remote repository." Surface
-                    // a hard failure instead so the caller falls back to other keys
-                    // and the operator sees a clear error in logs.
-                    log.error("SSH key at {} could not be made readable by run-as user '{}' — "
-                                    + "git operations using this key will fail. Returning null so "
-                                    + "fallback key resolution runs.",
-                            keyFile, claudeRunAsUser);
-                    return null;
-                }
             }
             return keyFile.toString();
         } catch (Exception e) {
@@ -1676,30 +1664,92 @@ public class ClaudeService {
     }
 
     /**
-     * Ensure the .ssh directory under the workspace can be traversed by whoever
-     * runs git. When git runs as a different OS user via {@code runuser}, chown
-     * the dir to that user (and force 0700); otherwise force 0755 so the dir is
-     * always world-traversable. Without this, a 0700 root-owned dir created
-     * under a restrictive umask makes the inner key file unreadable to the
-     * run-as user, and ssh fails with no diagnostic beyond git's generic
-     * "Could not read from remote repository."
+     * Materialize the settings SSH key when git/Claude subprocesses run as a
+     * different OS user via {@code runuser}. The key is created inside that
+     * user's own {@code ~/.ssh}, and both the directory and the file are created
+     * <em>as</em> that user, so they are owned by it from the start.
+     *
+     * <p>The previous approach created the file as root and then {@code chown}-ed
+     * it to the run-as user. In hardened containers where {@code CAP_CHOWN} is
+     * dropped, that chown fails with EPERM ("Operation not permitted"), leaving a
+     * root-owned 0600 key the run-as user cannot read; ssh then fails with only
+     * git's generic "Could not read from remote repository." Creating the files
+     * as the run-as user sidesteps chown entirely.
      */
-    private void ensureSshDirAccessible(File sshDir) {
-        if (sshDir == null || !sshDir.exists()) {
-            return;
+    private String materializeSettingsSshKeyForRunAsUser(String normalized) {
+        String runAsHome = resolveRunAsUserHome();
+        if (runAsHome == null) {
+            log.error("Cannot materialize settings SSH key: could not resolve home "
+                    + "directory for run-as user '{}'", claudeRunAsUser);
+            return null;
         }
-        boolean runAsOther = shouldRunAsDifferentUser();
+        Path sshDir = Path.of(runAsHome, ".ssh");
+        Path keyFile = sshDir.resolve("settings_git_id");
         try {
-            Set<PosixFilePermission> perms = PosixFilePermissions.fromString(
-                    runAsOther ? "rwx------" : "rwxr-xr-x");
-            Files.setPosixFilePermissions(sshDir.toPath(), perms);
-        } catch (UnsupportedOperationException ignored) {
-            // non-POSIX filesystem
+            // The JVM runs as root, so it can read the key file even though it is
+            // owned by the run-as user — skip the rewrite when content is unchanged.
+            if (Files.exists(keyFile)
+                    && new String(Files.readAllBytes(keyFile), StandardCharsets.UTF_8)
+                            .equals(normalized)) {
+                return keyFile.toString();
+            }
+            // Create ~/.ssh (0700) as the run-as user so the directory is owned by it.
+            if (!runAsRunAsUser(List.of("mkdir", "-p", "-m", "700", sshDir.toString()), null)) {
+                log.error("Failed to create {} as run-as user '{}' — settings SSH key "
+                        + "cannot be materialized", sshDir, claudeRunAsUser);
+                return null;
+            }
+            // Write the key file as the run-as user; umask 177 + chmod enforce 0600.
+            if (!runAsRunAsUser(
+                    List.of("sh", "-c", "umask 177 && cat > \"$1\" && chmod 600 \"$1\"",
+                            "sh", keyFile.toString()),
+                    normalized.getBytes(StandardCharsets.UTF_8))) {
+                log.error("Failed to write settings SSH key at {} as run-as user '{}' — "
+                        + "git operations using this key will fail", keyFile, claudeRunAsUser);
+                return null;
+            }
+            log.info("Materialized settings SSH key at {} (owned by run-as user '{}')",
+                    keyFile, claudeRunAsUser);
+            return keyFile.toString();
         } catch (Exception e) {
-            log.debug("Could not set permissions on {}: {}", sshDir, e.getMessage());
+            log.error("Failed to materialize settings SSH key: {}", e.getMessage(), e);
+            return null;
         }
-        if (runAsOther) {
-            chownToRunAsUser(sshDir.getAbsolutePath());
+    }
+
+    /**
+     * Run {@code argv} as the configured run-as user via {@code runuser}, feeding
+     * {@code stdin} to the process when non-null. Returns true on exit code 0.
+     */
+    private boolean runAsRunAsUser(List<String> argv, byte[] stdin) {
+        try {
+            List<String> cmd = new java.util.ArrayList<>();
+            cmd.add("runuser");
+            cmd.add("-u");
+            cmd.add(claudeRunAsUser);
+            cmd.add("--");
+            cmd.addAll(argv);
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            try (java.io.OutputStream os = p.getOutputStream()) {
+                if (stdin != null) {
+                    os.write(stdin);
+                }
+            }
+            String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            int exit = p.waitFor();
+            if (exit != 0) {
+                log.warn("`runuser -u {} -- {}` failed (exit {}): {}",
+                        claudeRunAsUser, String.join(" ", argv), exit,
+                        output.isEmpty() ? "(no output)" : output);
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("Failed to run command as run-as user '{}': {}",
+                    claudeRunAsUser, e.getMessage());
+            return false;
         }
     }
 

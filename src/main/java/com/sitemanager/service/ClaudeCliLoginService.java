@@ -36,6 +36,8 @@ public class ClaudeCliLoginService {
     private static final Pattern ANSI_RE = Pattern.compile("\\x1b\\[[0-9;?]*[A-Za-z]|\\x1b\\][^\\x07]*\\x07");
     private static final int MAX_LOG_LINES = 200;
     private static final long IDLE_TIMEOUT_MS = 10 * 60 * 1000L; // 10 minutes
+    private static final long CREDS_POLL_TIMEOUT_MS = 3000L;      // wait up to 3s for the file
+    private static final long CREDS_POLL_INTERVAL_MS = 200L;
 
     public enum Status { IDLE, STARTING, AWAITING_CODE, SUBMITTING, SUCCESS, FAILED }
 
@@ -311,20 +313,70 @@ public class ClaudeCliLoginService {
     }
 
     private void saveCredentialsFromDisk() throws IOException {
-        Path credsFile = Path.of(claudeService.getClaudeCliHome(), ".claude", ".credentials.json");
-        if (!Files.exists(credsFile)) {
-            throw new IOException("credentials file not found at " + credsFile);
+        Path credsFile = waitForCredentialsFile();
+        if (credsFile == null) {
+            throw new IOException("credentials file not found in any of: " + candidateCredentialPaths());
         }
         String json = Files.readString(credsFile, StandardCharsets.UTF_8);
         if (json.isBlank()) {
-            throw new IOException("credentials file is empty");
+            throw new IOException("credentials file is empty at " + credsFile);
         }
         SiteSettings settings = settingsRepository.findAll().stream()
                 .findFirst()
                 .orElseGet(() -> settingsRepository.save(new SiteSettings()));
         settings.setClaudeCredentials(json);
         settingsRepository.save(settings);
-        log.info("Saved Claude CLI credentials to site_settings ({} bytes)", json.length());
+        log.info("Saved Claude CLI credentials to site_settings from {} ({} bytes)", credsFile, json.length());
+    }
+
+    /**
+     * Locations the Claude CLI may have written {@code .credentials.json} to.
+     * The runuser-wrapped login subprocess can resolve HOME differently from
+     * {@link ClaudeService#getClaudeCliHome()}, so credentials may land in a
+     * sibling home directory — check the likely candidates rather than one path.
+     */
+    private List<Path> candidateCredentialPaths() {
+        java.util.LinkedHashSet<Path> paths = new java.util.LinkedHashSet<>();
+        paths.add(Path.of(claudeService.getClaudeCliHome(), ".claude", ".credentials.json"));
+        String runAsUser = claudeService.getClaudeRunAsUser();
+        if (runAsUser != null && !runAsUser.isBlank()) {
+            paths.add(Path.of("/home", runAsUser, ".claude", ".credentials.json"));
+        }
+        paths.add(Path.of("/root", ".claude", ".credentials.json"));
+        String jvmHome = System.getProperty("user.home");
+        if (jvmHome != null && !jvmHome.isBlank()) {
+            paths.add(Path.of(jvmHome, ".claude", ".credentials.json"));
+        }
+        return new ArrayList<>(paths);
+    }
+
+    /**
+     * Poll the candidate credential locations for a short window: the CLI may
+     * flush {@code .credentials.json} a moment after the login process exits.
+     * Returns the first non-empty file found, or null if none appears in time.
+     */
+    private Path waitForCredentialsFile() {
+        long deadline = System.currentTimeMillis() + CREDS_POLL_TIMEOUT_MS;
+        while (true) {
+            for (Path p : candidateCredentialPaths()) {
+                try {
+                    if (Files.exists(p) && Files.size(p) > 0) {
+                        return p;
+                    }
+                } catch (IOException ignored) {
+                    // unreadable right now — retry on the next poll
+                }
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                return null;
+            }
+            try {
+                Thread.sleep(CREDS_POLL_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
     }
 
     private void appendLog(String line) {

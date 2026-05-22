@@ -2440,7 +2440,7 @@ public class ClaudeService {
      * <p>PERMANENT conditions:</p>
      * <ul>
      *   <li>exit code 2 (CLI usage / argument error)</li>
-     *   <li>{@code is_error} JSON flag combined with authentication or model-not-found messages</li>
+     *   <li>{@code is_error} JSON flag combined with authentication, not-logged-in, or model-not-found messages</li>
      *   <li>successful exit (code 0) with null or empty output</li>
      * </ul>
      *
@@ -2458,12 +2458,14 @@ public class ClaudeService {
             return ClaudeFailureType.PERMANENT;
         }
 
-        // PERMANENT: is_error with authentication or model-not-found messages
+        // PERMANENT: is_error with authentication / not-logged-in / model-not-found
+        // messages. Retrying these is pointless — they need a config or login fix.
         if (rawOutput != null && rawOutput.contains("is_error")) {
             String lower = rawOutput.toLowerCase();
             if (lower.contains("authentication") || lower.contains("unauthorized") ||
                     lower.contains("invalid api key") || lower.contains("model not found") ||
-                    lower.contains("model_not_found") || lower.contains("invalid_api_key")) {
+                    lower.contains("model_not_found") || lower.contains("invalid_api_key") ||
+                    lower.contains("not logged in") || lower.contains("please run /login")) {
                 return ClaudeFailureType.PERMANENT;
             }
         }

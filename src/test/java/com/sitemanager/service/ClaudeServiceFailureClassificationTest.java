@@ -97,7 +97,9 @@ class ClaudeServiceFailureClassificationTest {
             "{\"is_error\":true,\"result\":\"invalid api key\"}",
             "{\"is_error\":true,\"result\":\"model not found\"}",
             "{\"is_error\":true,\"result\":\"model_not_found\"}",
-            "{\"is_error\":true,\"result\":\"invalid_api_key\"}"
+            "{\"is_error\":true,\"result\":\"invalid_api_key\"}",
+            "{\"is_error\":true,\"result\":\"Not logged in · Please run /login\"}",
+            "{\"is_error\":true,\"result\":\"not logged in\"}"
     })
     void isErrorWithAuthOrModelNotFoundIsPermanent(String rawOutput) {
         assertThat(claudeService.classifyFailure(rawOutput, 1, null))

@@ -6,7 +6,14 @@ spring:
     url: jdbc:sqlite:${SQLITE_DB_PATH:/data/aibe.db}
     driver-class-name: org.sqlite.JDBC
     hikari:
-      maximum-pool-size: 3
+      # A pool of 3 was too small: the app runs several concurrent async
+      # pipelines (suggestion execution, expert reviews) whose @Transactional
+      # callbacks each check out a connection, on top of HTTP traffic and the
+      # @Scheduled timeout sweep. That routinely exhausted the pool, producing
+      # "HikariPool-1 - Connection is not available". SQLite in WAL mode
+      # supports many concurrent readers (writes still serialize via
+      # busy_timeout), so a larger pool is safe and removes the contention.
+      maximum-pool-size: 10
       connection-init-sql: "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;"
   flyway:
     enabled: true

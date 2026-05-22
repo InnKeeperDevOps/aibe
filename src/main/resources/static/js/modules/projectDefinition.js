@@ -13,7 +13,7 @@ export async function openProjectDefinition() {
         const needsNewSession = res.status === 204;
         let existingState = null;
 
-        if (res.ok) {
+        if (res.ok && !needsNewSession) {
             existingState = await res.json();
         }
 

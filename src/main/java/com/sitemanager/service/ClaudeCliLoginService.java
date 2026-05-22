@@ -58,7 +58,7 @@ public class ClaudeCliLoginService {
     public ClaudeCliLoginService(ClaudeService claudeService,
                                  SiteSettingsRepository settingsRepository,
                                  @Value("${app.claude-login-script-binary:script}") String scriptBinary,
-                                 @Value("${app.claude-login-command:setup-token}") String loginCommand) {
+                                 @Value("${app.claude-login-command:auth login}") String loginCommand) {
         this.claudeService = claudeService;
         this.settingsRepository = settingsRepository;
         this.scriptBinary = scriptBinary;
@@ -91,10 +91,12 @@ public class ClaudeCliLoginService {
             // `script -qfec "claude <loginCommand>" /dev/null` allocates a PTY so the
             // CLI sees a real terminal on stdin/stdout. -f flushes after each write,
             // -e propagates the wrapped command's exit code, -q is quiet.
-            // Defaults to `setup-token`, which mints a long-lived, non-rotating token.
-            // `auth login` also works but yields an OAuth refresh token that rotates
-            // on every use, so a copy persisted to the DB goes stale and 401s after a
-            // pod restart restores it. Override via app.claude-login-command.
+            // The subcommand is `auth login`: it prints the OAuth URL on a single
+            // plain line this reader can extract with URL_RE. `setup-token` launches
+            // the full-screen TUI, which wraps the URL at the terminal width and
+            // yields a truncated, unusable link. Rotating-token staleness is handled
+            // separately by ClaudeService.persistRefreshedCredentialsIfChanged().
+            // Override via app.claude-login-command.
             List<String> cmd = new ArrayList<>();
             cmd.add(scriptBinary);
             cmd.add("-qfec");

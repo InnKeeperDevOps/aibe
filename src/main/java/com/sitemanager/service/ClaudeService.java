@@ -1796,20 +1796,39 @@ public class ClaudeService {
     }
 
     private String gitClone(String repoUrl, String targetDir) throws Exception {
+        long startTime = System.currentTimeMillis();
+
         File dir = new File(targetDir);
         if (dir.exists()) {
+            log.info("Removing existing directory before clone: {}", targetDir);
+            long rmStart = System.currentTimeMillis();
             ProcessBuilder cleanup = new ProcessBuilder("rm", "-rf", targetDir);
             cleanup.start().waitFor();
+            log.info("Removed {} in {}ms", targetDir, System.currentTimeMillis() - rmStart);
         }
 
         String sshRepoUrl = toSshUrl(repoUrl);
-        ProcessBuilder pb = new ProcessBuilder(wrapCommandForUser(
-                java.util.List.of("git", "clone", sshRepoUrl, targetDir)));
+
+        // Shallow, single-branch, tag-less clone — the workflow only needs the
+        // tip of the default branch to base a suggestion branch on, never older
+        // history or other branches. This turns a multi-minute full clone of a
+        // large repo into a few-seconds transfer. --progress forces git to emit
+        // progress over the (non-TTY) pipe so the log shows the clone advancing
+        // instead of going silent for the whole duration.
+        List<String> command = java.util.List.of(
+                "git", "clone",
+                "--depth=1",
+                "--single-branch",
+                "--no-tags",
+                "--progress",
+                sshRepoUrl, targetDir);
+        ProcessBuilder pb = new ProcessBuilder(wrapCommandForUser(command));
         pb.redirectErrorStream(true);
         pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
 
         applyGitEnvironment(pb);
 
+        log.info("Starting git clone: {} -> {}", sshRepoUrl, targetDir);
         Process process = pb.start();
 
         StringBuilder output = new StringBuilder();
@@ -1823,14 +1842,17 @@ public class ClaudeService {
         }
 
         int exitCode = process.waitFor();
+        long elapsed = System.currentTimeMillis() - startTime;
         if (exitCode != 0) {
             String trimmed = output.toString().trim();
             String suffix = trimmed.isEmpty() ? "" : ": " + trimmed;
             throw new RuntimeException(
-                    "Failed to clone repository " + sshRepoUrl + ": exit code " + exitCode + suffix);
+                    "Failed to clone repository " + sshRepoUrl + " after " + elapsed
+                            + "ms: exit code " + exitCode + suffix);
         }
 
-        log.info("Repository cloned to {}", targetDir);
+        log.info("Repository cloned to {} in {}ms (shallow, depth=1, single-branch)",
+                targetDir, elapsed);
         markDirectoryTrusted(targetDir);
         return targetDir;
     }

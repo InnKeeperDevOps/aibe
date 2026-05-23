@@ -2667,6 +2667,92 @@ public class ClaudeService {
     }
 
     /**
+     * Drive the Claude CLI to merge a pull request branch into the repository's
+     * default branch using plain git (SSH-based), then push. Used as a fallback
+     * when the GitHub REST API merge fails and as the implementation of the
+     * admin "Retry Merge" action. Returns true only when the CLI reports
+     * {@code "status":"MERGED"} in its JSON response.
+     *
+     * <p>The prompt explicitly tells Claude the SSH key path so the merge
+     * subprocess uses the right credentials for git push, even if it spawns
+     * helper processes that don't inherit our GIT_SSH_COMMAND env var.
+     */
+    public boolean mergePullRequestViaCli(String repoUrl, int prNumber,
+                                          String branchName, String workingDir) {
+        if (workingDir == null || workingDir.isBlank()) {
+            log.warn("mergePullRequestViaCli: no working directory for PR #{} — cannot merge", prNumber);
+            return false;
+        }
+        String sshKey = resolveGitSshKeyPath();
+        String sshKeyText = (sshKey != null && !sshKey.isBlank())
+                ? sshKey
+                : "(no SSH key configured — git will fall back to the default ssh agent / ~/.ssh config)";
+        String sshCommandText = (sshKey != null && !sshKey.isBlank())
+                ? "ssh -i " + sshKey + " -o StrictHostKeyChecking=no -o BatchMode=yes -o IdentitiesOnly=yes"
+                : "ssh -o StrictHostKeyChecking=no -o BatchMode=yes";
+
+        String prompt = String.format(
+                "Merge the pull request branch '%s' into the default branch of the repository " +
+                "at %s and push the merge commit. Use plain git over SSH — no GitHub API token " +
+                "is needed; the SSH key listed below provides the auth for git push.\n\n" +
+                "Working directory: %s\n" +
+                "Pull request: #%d\n" +
+                "Branch to merge: %s\n" +
+                "SSH key for git remote operations: %s\n\n" +
+                "Steps to perform (run them yourself, do not just describe them):\n" +
+                "1. cd into the working directory above.\n" +
+                "2. Make every git remote operation use the SSH key above:\n" +
+                "     export GIT_SSH_COMMAND=\"%s\"\n" +
+                "   (the harness already sets this for the top-level process; re-exporting it " +
+                "guarantees any helper you spawn inherits it).\n" +
+                "3. git fetch origin --no-tags --depth=1 '%s' && git fetch origin --no-tags\n" +
+                "4. Detect the default branch and check it out:\n" +
+                "     default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | " +
+                "sed 's@^refs/remotes/origin/@@')\n" +
+                "     [ -z \"$default_branch\" ] && default_branch=main\n" +
+                "     git checkout \"$default_branch\"\n" +
+                "     git pull --ff-only origin \"$default_branch\"\n" +
+                "5. Merge the suggestion branch with a real merge commit:\n" +
+                "     git merge --no-ff origin/%s -m \"Merge pull request #%d from %s\"\n" +
+                "6. Push:\n" +
+                "     git push origin \"$default_branch\"\n\n" +
+                "Output ONE final JSON line summarising the outcome.\n" +
+                "On success:\n" +
+                "  {\"status\": \"MERGED\", \"message\": \"merged %s into <default_branch> and pushed\"}\n" +
+                "If there are merge conflicts you cannot safely resolve:\n" +
+                "  {\"status\": \"CONFLICT\", \"message\": \"which paths conflict and why\"}\n" +
+                "On any other failure (push rejected, branch missing, auth error, etc.):\n" +
+                "  {\"status\": \"FAILED\", \"message\": \"what went wrong\"}\n",
+                branchName, repoUrl, workingDir, prNumber, branchName,
+                sshKeyText, sshCommandText, branchName, branchName, prNumber, branchName,
+                branchName);
+
+        String sessionId = generateSessionId();
+        try {
+            String response = sendToClaude(prompt, sessionId, workingDir, null, null,
+                    "merge-pr-" + prNumber, resolveModel(), 0);
+            String json = extractJsonObject(response);
+            if (json != null) {
+                JsonNode root = objectMapper.readTree(json);
+                String status = root.has("status") ? root.get("status").asText() : "";
+                String message = root.has("message") ? root.get("message").asText() : "";
+                if ("MERGED".equalsIgnoreCase(status)) {
+                    log.info("CLI merged PR #{}: {}", prNumber, message);
+                    return true;
+                }
+                log.warn("CLI did not merge PR #{}: status={} message={}", prNumber, status, message);
+                return false;
+            }
+            // No structured response — be conservative and treat as failure.
+            log.warn("CLI merge of PR #{} produced no structured response", prNumber);
+            return false;
+        } catch (Exception e) {
+            log.warn("CLI merge of PR #{} failed: {}", prNumber, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Merge a pull request on GitHub using the REST API.
      * Returns true if the merge succeeded (HTTP 200), false otherwise.
      * IMPORTANT: never log the githubToken parameter at any log level.

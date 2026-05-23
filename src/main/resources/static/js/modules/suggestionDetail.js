@@ -155,6 +155,12 @@ export async function loadDetail(id) {
     const canRetryPr = isAdmin && suggestion.currentPhase === 'Done — review request failed';
     document.getElementById('retryPrActions').style.display = canRetryPr ? '' : 'none';
 
+    // Retry merge action — visible while a PR is open and not yet merged
+    const canRetryMerge = isAdmin && suggestion.prNumber
+            && suggestion.status !== 'MERGED' && suggestion.status !== 'DENIED';
+    const retryMergeActions = document.getElementById('retryMergeActions');
+    if (retryMergeActions) retryMergeActions.style.display = canRetryMerge ? '' : 'none';
+
     // Retry execution action
     const canRetryExecution = isAdmin && suggestion.currentPhase && suggestion.currentPhase.includes('can retry');
     document.getElementById('retryExecutionActions').style.display = canRetryExecution ? '' : 'none';
@@ -324,6 +330,24 @@ export async function restartPlan() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Restart Plan (fresh repo)';
+    }
+}
+
+export async function retryMerge() {
+    if (!confirm('Retry merging this pull request? Claude will run the merge via git over SSH.')) return;
+    const btn = document.querySelector('#retryMergeActions button');
+    btn.disabled = true;
+    btn.textContent = 'Merging...';
+    try {
+        const result = await api('/suggestions/' + state.currentSuggestion + '/retry-merge', { method: 'POST' });
+        if (result && !result.success) {
+            alert('Merge retry failed: ' + (result.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Merge retry failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Retry Merge';
     }
 }
 

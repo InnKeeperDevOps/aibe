@@ -274,6 +274,14 @@ public class SuggestionController {
         return ResponseEntity.ok(suggestionService.retryPrCreation(id));
     }
 
+    @PostMapping("/{id}/retry-merge")
+    public ResponseEntity<?> retryMerge(@PathVariable Long id, HttpSession session) {
+        if (!permissionService.hasPermission(session, Permission.APPROVE_DENY_SUGGESTIONS)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Admin access required"));
+        }
+        return ResponseEntity.ok(suggestionService.retryMerge(id));
+    }
+
     @PostMapping("/{id}/retry")
     public ResponseEntity<?> retry(@PathVariable Long id, HttpSession session) {
         String username = (String) session.getAttribute("username");

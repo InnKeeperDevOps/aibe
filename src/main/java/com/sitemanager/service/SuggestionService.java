@@ -792,6 +792,10 @@ public class SuggestionService {
         return planExecutionService.retryPrCreation(suggestionId);
     }
 
+    public Map<String, Object> retryMerge(Long suggestionId) {
+        return planExecutionService.retryMergeForSuggestion(suggestionId);
+    }
+
     public List<PlanTask> getPlanTasks(Long suggestionId) {
         return planTaskRepository.findBySuggestionIdOrderByTaskOrder(suggestionId);
     }

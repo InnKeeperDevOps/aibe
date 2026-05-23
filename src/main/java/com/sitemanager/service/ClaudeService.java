@@ -1800,6 +1800,24 @@ public class ClaudeService {
         long startTime = System.currentTimeMillis();
 
         File dir = new File(targetDir);
+        // Ensure the parent (workspace) directory exists and is owned by the
+        // run-as user. ensureUserExists() chowns the workspace once at
+        // @PostConstruct, but only if it already existed at that point —
+        // in containers where /workspace is a volume mounted/created after
+        // startup (or simply never pre-created), git clone here would fail
+        // with "could not create work tree dir: Permission denied" because
+        // the run-as user can't mkdir under a root-owned parent.
+        File parent = dir.getParentFile();
+        if (parent != null) {
+            if (!parent.exists()) {
+                if (!parent.mkdirs() && !parent.exists()) {
+                    log.warn("Failed to create workspace parent dir: {}", parent);
+                } else {
+                    log.info("Created workspace parent dir: {}", parent);
+                }
+            }
+            chownToRunAsUser(parent.getPath());
+        }
         if (dir.exists()) {
             // Atomically rename the stale dir out of the way and delete it on a
             // background thread. A recursive rm -rf of a tree that has had

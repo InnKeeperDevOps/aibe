@@ -1175,13 +1175,23 @@ public class PlanExecutionService {
      * is_error JSON envelope whose result text reads "Not logged in · Please run /login";
      * ClaudeService wraps it as a PERMANENT ClaudeExecutionException, so the message
      * substring is the most reliable signal across the wrapping layers.
+     *
+     * <p>The CLI surfaces the same operator-actionable state with a different
+     * message — "Failed to authenticate. API Error: 401 Invalid authentication
+     * credentials" — when the stored OAuth refresh token has been spent (e.g.
+     * rotated by another pod). Treat both as the same condition so the task
+     * parks in PENDING awaiting an admin re-login rather than failing
+     * permanently on a configuration issue.
      */
     static boolean isClaudeNotLoggedIn(Throwable cause) {
         if (cause == null) return false;
         String msg = cause.getMessage();
         if (msg == null) return false;
         String lower = msg.toLowerCase();
-        return lower.contains("not logged in") || lower.contains("please run /login");
+        return lower.contains("not logged in")
+                || lower.contains("please run /login")
+                || lower.contains("invalid authentication credentials")
+                || (lower.contains("failed to authenticate") && lower.contains("401"));
     }
 
     /**

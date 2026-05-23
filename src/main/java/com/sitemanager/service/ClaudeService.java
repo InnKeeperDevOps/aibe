@@ -1603,11 +1603,20 @@ public class ClaudeService {
      * It is an operator-actionable configuration state, not a CLI bug — callers
      * (PlanExecutionService) detect it via the same substrings to pause work
      * gracefully until an admin re-logs in.
+     *
+     * <p>The CLI may also surface the same underlying condition as
+     * "Failed to authenticate. API Error: 401 Invalid authentication credentials"
+     * when the OAuth refresh token rotates between pods or has already been
+     * spent. The remediation is identical (admin re-login), so we treat the
+     * 401 variant as the same operator-actionable state.
      */
     boolean isNotLoggedInError(String output) {
         if (output == null) return false;
         String lower = output.toLowerCase();
-        return lower.contains("not logged in") || lower.contains("please run /login");
+        return lower.contains("not logged in")
+                || lower.contains("please run /login")
+                || lower.contains("invalid authentication credentials")
+                || (lower.contains("failed to authenticate") && lower.contains("401"));
     }
 
     private String handleDeadSession(String prompt, String sessionId, String workingDir,

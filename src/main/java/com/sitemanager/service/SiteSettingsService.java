@@ -60,6 +60,7 @@ public class SiteSettingsService {
         current.setAutoMergePr(updated.isAutoMergePr());
         current.setRequireRegistrationApproval(updated.isRequireRegistrationApproval());
         current.setRegistrationsEnabled(updated.isRegistrationsEnabled());
+        current.setManagedFolders(updated.getManagedFolders());
         // SSH key: only update when caller provides a non-null value, so blank submissions
         // from the UI (where the existing key is never echoed back) preserve the stored key.
         // An explicit empty string clears the key.

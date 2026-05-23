@@ -8,6 +8,8 @@ export async function loadSettings() {
     state.settings = settings;
     document.getElementById('settingSiteName').value = settings.siteName || '';
     document.getElementById('settingRepoUrl').value = settings.targetRepoUrl || '';
+    const managedFoldersEl = document.getElementById('settingManagedFolders');
+    if (managedFoldersEl) managedFoldersEl.value = settings.managedFolders || '';
     document.getElementById('settingTimeout').value = settings.suggestionTimeoutMinutes || 1440;
     document.getElementById('settingGithubToken').value = settings.githubToken || '';
     document.getElementById('settingClaudeModel').value = settings.claudeModel || '';
@@ -445,6 +447,7 @@ export async function saveSettings() {
         body: JSON.stringify({
             siteName: document.getElementById('settingSiteName').value,
             targetRepoUrl: document.getElementById('settingRepoUrl').value,
+            managedFolders: (document.getElementById('settingManagedFolders') || {}).value || null,
             suggestionTimeoutMinutes: parseInt(document.getElementById('settingTimeout').value) || 1440,
             githubToken: document.getElementById('settingGithubToken').value || null,
             claudeModel: document.getElementById('settingClaudeModel').value || null,

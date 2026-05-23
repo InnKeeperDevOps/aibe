@@ -76,6 +76,14 @@ public class SiteSettings {
     @Column(name = "claude_config", columnDefinition = "TEXT")
     private String claudeConfig = DEFAULT_CLAUDE_CONFIG;
 
+    /**
+     * Newline-separated list of folders the AI is allowed to read/modify in
+     * the target repository, relative to the repo root. NULL or blank means
+     * no restriction — AI works on the whole repo (historic behaviour).
+     */
+    @Column(name = "managed_folders", columnDefinition = "TEXT")
+    private String managedFolders;
+
     public SiteSettings() {}
 
     public Long getId() { return id; }
@@ -116,6 +124,8 @@ public class SiteSettings {
     public void setGitSshPublicKey(String v) { this.gitSshPublicKey = v; }
     public String getClaudeCredentials() { return claudeCredentials; }
     public void setClaudeCredentials(String v) { this.claudeCredentials = v; }
+    public String getManagedFolders() { return managedFolders; }
+    public void setManagedFolders(String v) { this.managedFolders = v; }
     public String getClaudeConfig() { return claudeConfig; }
     public void setClaudeConfig(String v) { this.claudeConfig = v; }
 

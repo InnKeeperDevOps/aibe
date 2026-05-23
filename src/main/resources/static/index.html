@@ -500,6 +500,16 @@
                     <label>Project Repository</label>
                     <input type="text" id="settingRepoUrl" placeholder="Paste the link to your project">
                 </div>
+                <div class="form-group" style="grid-column:1/-1">
+                    <label>Managed Folders</label>
+                    <textarea id="settingManagedFolders" rows="4"
+                              placeholder="One folder per line, relative to the repo root (e.g. src/main/java). Leave blank to allow the whole repo."
+                              style="width:100%;font-family:monospace;font-size:0.85rem"></textarea>
+                    <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem">
+                        Restrict the AI to these folders. Any task that would touch a file outside this list
+                        is failed before it runs. Blank = no restriction (work on the whole repo).
+                    </div>
+                </div>
                 <div class="form-group">
                     <label>Time Limit Per Suggestion (minutes)</label>
                     <input type="text" id="settingTimeout">

@@ -780,7 +780,54 @@ public class ClaudeService {
         String model = resolveModel();
         // Route through sendToClaude so this respects the rate/concurrency gates
         // and appears in the admin Claude Queue page like every other CLI call.
-        return sendToClaude(prompt, sessionId, getMainRepoDir(), null, null, "recommendations", model, 0);
+        return sendToClaude(prependManagedFoldersScope(prompt), sessionId, getMainRepoDir(),
+                null, null, "recommendations", model, 0);
+    }
+
+    /**
+     * Prepend the {@link #buildManagedFoldersScope managed-folders scope block}
+     * to a prompt. No-op when no scope is configured.
+     */
+    String prependManagedFoldersScope(String prompt) {
+        String scope = buildManagedFoldersScope();
+        return scope.isEmpty() ? prompt : scope + prompt;
+    }
+
+    /**
+     * Build the "scope restriction" text that pins the AI to the admin-configured
+     * managed folders in {@link SiteSettings#getManagedFolders()}. Returns an
+     * empty string when no folders are configured, so the historic
+     * whole-repo behaviour is preserved.
+     */
+    String buildManagedFoldersScope() {
+        SiteSettings settings = getSettings();
+        String raw = settings != null ? settings.getManagedFolders() : null;
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        List<String> folders = new java.util.ArrayList<>();
+        for (String line : raw.split("\\R")) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                folders.add(trimmed);
+            }
+        }
+        if (folders.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== SCOPE RESTRICTION ===\n");
+        sb.append("You may ONLY read, modify, create, rename, or delete files within these folders ");
+        sb.append("(paths are relative to the repository root):\n");
+        for (String f : folders) {
+            sb.append("  - ").append(f).append("\n");
+        }
+        sb.append("Treat all other folders as read-only context: you may consult them to understand ");
+        sb.append("the codebase, but you MUST NOT change anything outside the folders listed above. ");
+        sb.append("If a task seems to require changes outside this scope, do NOT proceed — mark the ");
+        sb.append("task FAILED with a clear explanation of which out-of-scope path it would touch.\n");
+        sb.append("=========================\n\n");
+        return sb.toString();
     }
 
     /**
@@ -820,7 +867,7 @@ public class ClaudeService {
     }
 
     String buildEvaluationPrompt(String suggestionTitle, String suggestionDescription, String repoUrl) {
-        return String.format(
+        return prependManagedFoldersScope(String.format(
                 "You are reviewing a suggestion for a website or application at: %s\n\n" +
                 "Suggestion Title: %s\n" +
                 "Suggestion Description: %s\n\n" +
@@ -844,7 +891,7 @@ public class ClaudeService {
                 repoUrl != null ? repoUrl : "not configured",
                 suggestionTitle,
                 suggestionDescription
-        );
+        ));
     }
 
     public CompletableFuture<String> continueConversation(String sessionId, String userMessage,
@@ -857,7 +904,7 @@ public class ClaudeService {
     public CompletableFuture<String> executePlan(String sessionId, String plan, String tasksJson,
                                                   String workingDir,
                                                   Consumer<String> progressCallback) {
-        String prompt = String.format(
+        String prompt = prependManagedFoldersScope(String.format(
                 "Execute the following implementation plan in the repository at %s.\n\n" +
                 "Plan:\n%s\n\n" +
                 "Tasks (execute in order):\n%s\n\n" +
@@ -891,7 +938,7 @@ public class ClaudeService {
                 "If the overall execution fails:\n" +
                 "{\"status\": \"FAILED\", \"message\": \"what went wrong\"}",
                 workingDir, plan, tasksJson != null ? tasksJson : "No structured tasks — follow the plan above."
-        );
+        ));
 
         return sendToClaudeAsync(prompt, sessionId, workingDir, null, progressCallback, "execute", resolveModel(), 0);
     }
@@ -907,7 +954,7 @@ public class ClaudeService {
                                                          String completedTasksSummary,
                                                          String workingDir,
                                                          Consumer<String> progressCallback) {
-        String prompt = String.format(
+        String prompt = prependManagedFoldersScope(String.format(
                 "Execute ONLY task %d of %d in the repository at %s.\n\n" +
                 "Overall Plan:\n%s\n\n" +
                 "%s" +
@@ -946,7 +993,7 @@ public class ClaudeService {
                 taskTitle,
                 taskDescription != null ? taskDescription : taskTitle,
                 taskOrder, taskOrder, taskOrder, taskOrder, taskOrder
-        );
+        ));
 
         return sendToClaudeAsync(prompt, sessionId, workingDir, null, progressCallback,
                 "execute-task-" + taskOrder, resolveModel(), 0);
@@ -962,7 +1009,7 @@ public class ClaudeService {
                                                             String taskDescription, String plan,
                                                             String workingDir,
                                                             Consumer<String> progressCallback) {
-        String prompt = String.format(
+        String prompt = prependManagedFoldersScope(String.format(
                 "%s\n\n" +
                 "You are reviewing the ACTUAL CODE CHANGES made for a specific task.\n\n" +
                 "Suggestion: %s\n" +
@@ -996,7 +1043,7 @@ public class ClaudeService {
                 taskOrder,
                 taskTitle,
                 taskDescription != null ? taskDescription : taskTitle
-        );
+        ));
 
         return sendToClaudeAsync(prompt, sessionId, workingDir, null, progressCallback,
                 "task-review:" + expertDisplayName + ":task-" + taskOrder, resolveExpertModel(), resolveExpertMaxTurns());
@@ -1028,7 +1075,7 @@ public class ClaudeService {
     String buildProjectOwnerReviewPrompt(String expertPrompt, String suggestionTitle,
                                                    String suggestionDescription, String plan,
                                                    String tasksJson, String previousNotes) {
-        return String.format(
+        return prependManagedFoldersScope(String.format(
                 "%s\n\n" +
                 "Suggestion Title: %s\n" +
                 "Suggestion Description: %s\n\n" +
@@ -1071,7 +1118,7 @@ public class ClaudeService {
                 tasksJson != null ? "Current Tasks:\n" + tasksJson + "\n\n" : "",
                 previousNotes != null && !previousNotes.isBlank() ?
                         "Previous expert reviews:\n" + previousNotes + "\n\n" : ""
-        );
+        ));
     }
 
     String buildStandardExpertReviewPrompt(String expertPrompt, String suggestionTitle,
@@ -1107,7 +1154,7 @@ public class ClaudeService {
                 "but you CANNOT remove them or change what they deliver to the user.\n\n";
         }
 
-        return String.format(
+        return prependManagedFoldersScope(String.format(
                 "%s\n\n" +
                 "%s" +
                 "Suggestion Title: %s\n" +
@@ -1166,7 +1213,7 @@ public class ClaudeService {
                 previousNotes != null && !previousNotes.isBlank() ?
                         "Previous expert reviews:\n" + previousNotes + "\n\n" : "",
                 ownerLockContext
-        );
+        ));
     }
 
     public CompletableFuture<String> reviewExpertFeedback(String sessionId, String expertDisplayName,

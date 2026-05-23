@@ -127,7 +127,7 @@ public class ClaudeService {
     @Value("${app.claude-max-turns-expert:0}")
     private int claudeMaxTurnsExpertDefault;
 
-    @Value("${app.claude-max-concurrent:2}")
+    @Value("${app.claude-max-concurrent:1}")
     private int claudeMaxConcurrent;
 
     @Value("${app.claude-max-calls-per-minute:10}")
@@ -147,7 +147,7 @@ public class ClaudeService {
         this.settingsRepository = settingsRepository;
         this.cliLogRepository = cliLogRepository;
         // Defaults; @PostConstruct re-inits with configured values
-        this.claudeGate = new Semaphore(2, true); // fair = FIFO ordering
+        this.claudeGate = new Semaphore(1, true); // fair = FIFO ordering
         this.callTimestamps = new long[10];
     }
 

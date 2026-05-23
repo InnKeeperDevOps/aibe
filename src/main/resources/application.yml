@@ -56,8 +56,12 @@ app:
   # Max turns for expert reviews (limits tool-use loops). 0 = unlimited
   # (omits the --max-turns flag entirely). Set a positive value to cap turns.
   claude-max-turns-expert: ${CLAUDE_MAX_TURNS_EXPERT:0}
-  # Max concurrent Claude CLI processes. Prevents resource exhaustion during batch expert reviews.
-  claude-max-concurrent: ${CLAUDE_MAX_CONCURRENT:2}
+  # Max concurrent Claude CLI processes. Must be 1: parallel CLI subprocesses
+  # race on the shared ~/.claude/.credentials.json — both read the same OAuth
+  # refresh token at startup, and when one rotates it mid-call the other gets
+  # "401 Invalid authentication credentials" (refresh tokens are single-use).
+  # Raising this re-introduces intermittent permanent task failures.
+  claude-max-concurrent: ${CLAUDE_MAX_CONCURRENT:1}
   # Max Claude CLI calls per minute (sliding window). Prevents runaway loops from overwhelming the API.
   claude-max-calls-per-minute: ${CLAUDE_MAX_CALLS_PER_MINUTE:10}
   git-ssh-key-path: ${GIT_SSH_KEY_PATH:}

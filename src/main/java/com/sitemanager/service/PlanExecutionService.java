@@ -1106,6 +1106,31 @@ public class PlanExecutionService {
         Throwable cause = ex instanceof java.util.concurrent.CompletionException && ex.getCause() != null
                 ? ex.getCause() : ex;
 
+        // "Not logged in" is a global, operator-actionable condition — not a task bug.
+        // Every task will hit the same error until an admin logs in via the Settings page.
+        // Park the task in PENDING (so it auto-resumes the moment credentials appear)
+        // instead of marking it permanently FAILED, which is misleading and burns the
+        // suggestion's failure messaging on a configuration issue.
+        if (isClaudeNotLoggedIn(cause)) {
+            task.setStatus(TaskStatus.PENDING);
+            task.setStartedAt(null);
+            task.setStatusDetail("Waiting for Claude CLI login by an admin");
+            planTaskRepository.save(task);
+            messagingHelper.broadcastTaskUpdate(suggestionId, task);
+
+            suggestion.setCurrentPhase("Waiting for Claude CLI login");
+            suggestionRepository.save(suggestion);
+            messagingHelper.broadcastUpdate(suggestion);
+
+            messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                    "Work is paused: the Claude CLI is not logged in. An admin can log in from the Settings page, " +
+                            "and this suggestion will resume automatically.");
+
+            log.warn("[AI-FLOW] suggestion={} task={} paused — Claude CLI is not logged in",
+                    suggestionId, taskOrder);
+            return;
+        }
+
         boolean isTransient = cause instanceof ClaudeService.ClaudeExecutionException &&
                 ((ClaudeService.ClaudeExecutionException) cause).getType() == ClaudeService.ClaudeFailureType.TRANSIENT;
         boolean hasRetriesLeft = task.getRetryCount() < 3;
@@ -1143,6 +1168,20 @@ public class PlanExecutionService {
 
             log.error("[AI-FLOW] suggestion={} task={} permanently failed: {}", suggestionId, taskOrder, reason);
         }
+    }
+
+    /**
+     * Detect the "Claude CLI is not logged in" condition. The CLI returns this as an
+     * is_error JSON envelope whose result text reads "Not logged in · Please run /login";
+     * ClaudeService wraps it as a PERMANENT ClaudeExecutionException, so the message
+     * substring is the most reliable signal across the wrapping layers.
+     */
+    static boolean isClaudeNotLoggedIn(Throwable cause) {
+        if (cause == null) return false;
+        String msg = cause.getMessage();
+        if (msg == null) return false;
+        String lower = msg.toLowerCase();
+        return lower.contains("not logged in") || lower.contains("please run /login");
     }
 
     /**

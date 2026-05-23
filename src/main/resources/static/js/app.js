@@ -96,6 +96,18 @@ import {
     renderRecommendationsError,
     closeRecommendationsModal,
     prefillFromRecommendation,
+    openRecommendationsHistory,
+    closeRecommendationsHistory,
+    viewRecommendationRun,
+    renderRecommendationsHistoryList,
+    renderRecommendationRunDetail,
+    renderActiveRecommendations,
+    applyRecommendationsHistoryFilters,
+    clearRecommendationsHistoryFilters,
+    refreshRecommendationsHistory,
+    startFreshRecommendationsRun,
+    rerunRecommendationRun,
+    markRecommendationActedOn,
 } from './modules/recommendations.js';
 
 import {
@@ -187,6 +199,9 @@ async function createSuggestion(e) {
         showToast(data.error);
         return;
     }
+    // If this suggestion was created from an AI recommendation, mark that
+    // recommendation as acted-on so it no longer appears in the active list.
+    await markRecommendationActedOn(data.id);
     document.getElementById('createForm').reset();
     navigate('detail', data.id);
 }
@@ -341,6 +356,18 @@ window.app = {
     renderRecommendationsError,
     closeRecommendationsModal,
     prefillFromRecommendation,
+    openRecommendationsHistory,
+    closeRecommendationsHistory,
+    viewRecommendationRun,
+    renderRecommendationsHistoryList,
+    renderRecommendationRunDetail,
+    renderActiveRecommendations,
+    applyRecommendationsHistoryFilters,
+    clearRecommendationsHistoryFilters,
+    refreshRecommendationsHistory,
+    startFreshRecommendationsRun,
+    rerunRecommendationRun,
+    markRecommendationActedOn,
 
     // project definition
     openProjectDefinition,

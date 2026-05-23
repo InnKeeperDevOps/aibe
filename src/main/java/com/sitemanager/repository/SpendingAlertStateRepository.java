@@ -25,25 +25,34 @@ public interface SpendingAlertStateRepository extends JpaRepository<SpendingAler
             String windowKey,
             int thresholdPercent);
 
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM SpendingAlertState s WHERE s.scope = :scope AND s.scopeKey = :scopeKey")
+    void deleteByScopeAndScopeKey(@Param("scope") SpendingAlertState.Scope scope,
+                                  @Param("scopeKey") String scopeKey);
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM SpendingAlertState s WHERE s.scope = :scope")
+    void deleteByScope(@Param("scope") SpendingAlertState.Scope scope);
+
     /**
      * Remove all per-suggestion alert records for a given suggestion so the
      * thresholds become eligible to fire again under a newly configured
      * limit.
      */
-    @Modifying
-    @Transactional
-    @Query("DELETE FROM SpendingAlertState s WHERE s.scope = com.sitemanager.model.SpendingAlertState.Scope.PER_SUGGESTION AND s.scopeKey = :scopeKey")
-    void deletePerSuggestionAlerts(@Param("scopeKey") String scopeKey);
+    default void deletePerSuggestionAlerts(String scopeKey) {
+        deleteByScopeAndScopeKey(SpendingAlertState.Scope.PER_SUGGESTION, scopeKey);
+    }
 
     /**
      * Remove all global alert records. Used when the global limit value or
      * reset period is changed so admins can be alerted again under the new
      * configuration.
      */
-    @Modifying
-    @Transactional
-    @Query("DELETE FROM SpendingAlertState s WHERE s.scope = com.sitemanager.model.SpendingAlertState.Scope.GLOBAL")
-    void deleteAllGlobalAlerts();
+    default void deleteAllGlobalAlerts() {
+        deleteByScope(SpendingAlertState.Scope.GLOBAL);
+    }
 
     /**
      * Remove every recorded per-suggestion alert across all suggestions.
@@ -52,8 +61,7 @@ public interface SpendingAlertStateRepository extends JpaRepository<SpendingAler
      * different spend value, so every suggestion deserves a fresh chance
      * to fire warnings.
      */
-    @Modifying
-    @Transactional
-    @Query("DELETE FROM SpendingAlertState s WHERE s.scope = com.sitemanager.model.SpendingAlertState.Scope.PER_SUGGESTION")
-    void deleteAllPerSuggestionAlerts();
+    default void deleteAllPerSuggestionAlerts() {
+        deleteByScope(SpendingAlertState.Scope.PER_SUGGESTION);
+    }
 }

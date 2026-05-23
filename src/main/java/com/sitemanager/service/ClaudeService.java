@@ -1497,16 +1497,27 @@ public class ClaudeService {
         applyGitEnvironment(pb);
 
         Process process = pb.start();
+        // Buffer git's stdout/stderr instead of streaming it at INFO. The output
+        // includes lines like " * [new branch] <name> -> origin/<name>", and remote
+        // branch names can contain substrings like "error" / "exception" / "failed"
+        // that trip keyword-based log-monitoring systems even when the pull
+        // succeeds. We replay the captured lines at WARN only when the pull
+        // actually fails, so diagnostic value is preserved without false alarms.
+        List<String> capturedOutput = new java.util.ArrayList<>();
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                log.info("Git pull main-repo: {}", line);
+                capturedOutput.add(line);
+                log.debug("Git pull main-repo: {}", line);
             }
         }
 
         int exitCode = process.waitFor();
         if (exitCode != 0) {
+            for (String line : capturedOutput) {
+                log.warn("Git pull main-repo: {}", line);
+            }
             log.warn("Git pull failed (exit {}), falling back to fresh clone", exitCode);
             cloneMainRepository(repoUrl);
             return true;

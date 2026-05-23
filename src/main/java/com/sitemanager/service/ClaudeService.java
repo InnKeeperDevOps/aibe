@@ -178,6 +178,7 @@ public class ClaudeService {
         resolveClaudeCliPath();
         materializeStoredClaudeCredentials();
         materializeStoredClaudeConfig();
+        sweepOrphanedTrashOnStartup();
     }
 
     /**
@@ -1800,11 +1801,15 @@ public class ClaudeService {
 
         File dir = new File(targetDir);
         if (dir.exists()) {
-            log.info("Removing existing directory before clone: {}", targetDir);
-            long rmStart = System.currentTimeMillis();
-            ProcessBuilder cleanup = new ProcessBuilder("rm", "-rf", targetDir);
-            cleanup.start().waitFor();
-            log.info("Removed {} in {}ms", targetDir, System.currentTimeMillis() - rmStart);
+            // Atomically rename the stale dir out of the way and delete it on a
+            // background thread. A recursive rm -rf of a tree that has had
+            // node_modules / .gradle / build artifacts accumulated by prior
+            // Claude runs is one syscall per file and can hang for many minutes,
+            // blocking the clone for no good reason. Rename is one syscall on
+            // the same filesystem (near-instant regardless of tree size) and
+            // leaves the background thread free to take however long the
+            // actual deletion needs.
+            evictStaleWorkspaceDir(dir.toPath());
         }
 
         String sshRepoUrl = toSshUrl(repoUrl);
@@ -1855,6 +1860,87 @@ public class ClaudeService {
                 targetDir, elapsed);
         markDirectoryTrusted(targetDir);
         return targetDir;
+    }
+
+    /**
+     * Rename {@code dir} to a sibling {@code .trash-<uuid>} path and delete the
+     * renamed copy on a background daemon thread. Used by {@link #gitClone} to
+     * keep huge accumulated trees (node_modules / build / .gradle) from
+     * blocking the new clone — rename is atomic on the same filesystem, so the
+     * caller is unblocked in milliseconds regardless of tree size.
+     *
+     * <p>Falls back to an inline {@code rm -rf} if the rename can't be done
+     * atomically (e.g. cross-filesystem) so the call still succeeds, just slowly.
+     */
+    private void evictStaleWorkspaceDir(Path dir) throws Exception {
+        Path trash = dir.resolveSibling(dir.getFileName().toString() + ".trash-" + UUID.randomUUID());
+        long renameStart = System.currentTimeMillis();
+        try {
+            Files.move(dir, trash, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            log.info("Renamed stale {} -> {} in {}ms (background cleanup queued)",
+                    dir, trash, System.currentTimeMillis() - renameStart);
+            scheduleBackgroundDelete(trash);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            log.warn("Atomic rename of {} not supported on this filesystem ({}); falling back to inline rm -rf",
+                    dir, e.getMessage());
+            long rmStart = System.currentTimeMillis();
+            ProcessBuilder cleanup = new ProcessBuilder("rm", "-rf", dir.toString());
+            cleanup.start().waitFor();
+            log.info("Removed {} (inline) in {}ms", dir, System.currentTimeMillis() - rmStart);
+        }
+    }
+
+    /**
+     * Delete {@code path} on a background daemon thread via {@code rm -rf}.
+     * Logs the elapsed time so cleanup pressure on workspace storage stays
+     * visible without blocking any caller.
+     */
+    private void scheduleBackgroundDelete(Path path) {
+        Thread t = new Thread(() -> {
+            long start = System.currentTimeMillis();
+            try {
+                ProcessBuilder pb = new ProcessBuilder("rm", "-rf", path.toString());
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                consumeStream(p.getInputStream());
+                int rc = p.waitFor();
+                long elapsed = System.currentTimeMillis() - start;
+                if (rc == 0) {
+                    log.info("Background cleanup of {} completed in {}ms", path, elapsed);
+                } else {
+                    log.warn("Background cleanup of {} failed (rc={}, elapsed={}ms)", path, rc, elapsed);
+                }
+            } catch (Exception e) {
+                log.warn("Background cleanup of {} errored after {}ms: {}",
+                        path, System.currentTimeMillis() - start, e.getMessage());
+            }
+        }, "workspace-cleanup");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * On startup, sweep the workspace for {@code *.trash-*} directories left
+     * behind by a previous pod that was killed mid-cleanup, and delete them on
+     * background threads so they don't accumulate and fill the volume.
+     */
+    private void sweepOrphanedTrashOnStartup() {
+        if (workspaceDir == null || workspaceDir.isBlank()) {
+            return;
+        }
+        File ws = new File(workspaceDir);
+        if (!ws.isDirectory()) {
+            return;
+        }
+        File[] entries = ws.listFiles((d, name) -> name.contains(".trash-"));
+        if (entries == null || entries.length == 0) {
+            return;
+        }
+        log.info("Found {} orphaned trash director{} in {}; deleting in background",
+                entries.length, entries.length == 1 ? "y" : "ies", workspaceDir);
+        for (File entry : entries) {
+            scheduleBackgroundDelete(entry.toPath());
+        }
     }
 
     /**

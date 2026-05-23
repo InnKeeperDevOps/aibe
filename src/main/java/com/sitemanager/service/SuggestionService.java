@@ -796,6 +796,65 @@ public class SuggestionService {
         return planExecutionService.retryMergeForSuggestion(suggestionId);
     }
 
+    /**
+     * Resume an in-progress suggestion from the last successful task: every
+     * COMPLETED task is left alone (so its committed work stays in the
+     * branch), and every non-COMPLETED task (FAILED, IN_PROGRESS, REVIEWING,
+     * PENDING) is reset to a fresh PENDING state. The existing working
+     * directory and suggestion branch are preserved — this is a "continue
+     * from where it broke" retry, not a fresh re-clone like Restart Plan.
+     */
+    public Suggestion retryFromLastSuccessful(Long suggestionId) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Suggestion not found"));
+
+        SuggestionStatus status = suggestion.getStatus();
+        boolean restartable = status == SuggestionStatus.IN_PROGRESS
+                || status == SuggestionStatus.TESTING;
+        if (!restartable) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This suggestion isn't being implemented right now — nothing to retry from");
+        }
+
+        List<PlanTask> all = planTaskRepository.findBySuggestionIdOrderByTaskOrder(suggestionId);
+        List<PlanTask> unfinished = all.stream()
+                .filter(t -> t.getStatus() != TaskStatus.COMPLETED)
+                .toList();
+        if (unfinished.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "All tasks are already completed — nothing to retry");
+        }
+
+        long completedCount = all.size() - unfinished.size();
+        log.info("[AI-FLOW] suggestion={} resuming from last successful task ({} of {} tasks already completed)",
+                suggestionId, completedCount, all.size());
+
+        // Reset every non-COMPLETED task to a fresh PENDING — COMPLETED tasks
+        // stay as-is so their committed work is preserved on the branch.
+        for (PlanTask t : unfinished) {
+            t.setStatus(TaskStatus.PENDING);
+            t.setRetryCount(0);
+            t.setFailureReason(null);
+            t.setStartedAt(null);
+            t.setCompletedAt(null);
+            t.setStatusDetail("Waiting to start");
+        }
+        planTaskRepository.saveAll(unfinished);
+
+        suggestion.setFailureReason(null);
+        suggestion.setCurrentPhase("Resuming after the last successful task...");
+        suggestionRepository.save(suggestion);
+        messagingHelper.broadcastUpdate(suggestion);
+        messagingHelper.broadcastTasks(suggestionId);
+
+        messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                "Picking up after the last successful task (" + completedCount + "/" + all.size()
+                        + " already done). Keeping the existing workspace and branch.");
+
+        planExecutionService.executeNextTask(suggestionId);
+        return suggestion;
+    }
+
     public List<PlanTask> getPlanTasks(Long suggestionId) {
         return planTaskRepository.findBySuggestionIdOrderByTaskOrder(suggestionId);
     }

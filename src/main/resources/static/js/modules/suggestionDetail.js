@@ -165,6 +165,12 @@ export async function loadDetail(id) {
     const canRetryExecution = isAdmin && suggestion.currentPhase && suggestion.currentPhase.includes('can retry');
     document.getElementById('retryExecutionActions').style.display = canRetryExecution ? '' : 'none';
 
+    // Resume from last successful task — keeps completed work, reruns the rest.
+    // Only meaningful while the plan is mid-execution.
+    const canResumeFromLast = isAdmin && ['IN_PROGRESS', 'TESTING'].includes(suggestion.status);
+    const resumeFromLastActions = document.getElementById('resumeFromLastActions');
+    if (resumeFromLastActions) resumeFromLastActions.style.display = canResumeFromLast ? '' : 'none';
+
     // Restart plan action — available to admins while the plan is being implemented
     const canRestartPlan = isAdmin && ['IN_PROGRESS', 'TESTING', 'DEV_COMPLETE'].includes(suggestion.status);
     const restartPlanActions = document.getElementById('restartPlanActions');
@@ -312,6 +318,24 @@ export async function retryExecution() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Retry Execution';
+    }
+}
+
+export async function retryFromLast() {
+    if (!confirm('Resume from the last successful task? Completed tasks stay as-is; the failed or stuck task will be retried and execution continues from there.')) return;
+    const btn = document.querySelector('#resumeFromLastActions button');
+    btn.disabled = true;
+    btn.textContent = 'Resuming...';
+    try {
+        const result = await api('/suggestions/' + state.currentSuggestion + '/retry-from-last', { method: 'POST' });
+        if (result && result.error) {
+            alert('Resume failed: ' + result.error);
+        }
+    } catch (e) {
+        alert('Resume failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Resume from last successful task';
     }
 }
 

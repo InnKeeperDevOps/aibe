@@ -52,6 +52,57 @@ header h1 { font-size: 1.25rem; color: var(--primary); cursor: pointer; }
     font-size: 0.85rem;
 }
 
+/* Hamburger menu */
+.menu-wrapper { position: relative; }
+.menu-toggle {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.35rem 0.6rem;
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--primary);
+}
+.menu-toggle:hover { background: var(--bg); }
+.menu-toggle[aria-expanded="true"] {
+    background: var(--bg);
+    border-color: var(--primary);
+}
+.menu-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    min-width: 200px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.10);
+    padding: 0.35rem 0;
+    z-index: 1000;
+}
+.menu-dropdown.open { display: block; }
+.menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.55rem 1rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: inherit;
+    font-family: inherit;
+}
+.menu-item:hover { background: var(--bg); }
+.menu-item:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.menu-divider {
+    height: 1px;
+    margin: 0.35rem 0;
+    background: var(--border);
+}
+
 /* Buttons */
 .btn {
     display: inline-flex;

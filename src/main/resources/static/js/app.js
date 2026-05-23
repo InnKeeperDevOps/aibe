@@ -410,6 +410,10 @@ window.app = {
     saveAsDraft,
     reply,
 
+    // main menu (hamburger)
+    toggleMainMenu,
+    closeMainMenu,
+
     // utilities
     showToast,
 };
@@ -418,6 +422,51 @@ window.app = {
 // Bootstrap
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Main hamburger menu — open/close, outside-click, Escape, auto-close on nav
+// ---------------------------------------------------------------------------
+
+function toggleMainMenu(event) {
+    if (event) event.stopPropagation();
+    const menu = document.getElementById('mainMenu');
+    const toggle = document.getElementById('menuToggle');
+    if (!menu) return;
+    const willOpen = !menu.classList.contains('open');
+    menu.classList.toggle('open', willOpen);
+    if (toggle) toggle.setAttribute('aria-expanded', String(willOpen));
+}
+
+function closeMainMenu() {
+    const menu = document.getElementById('mainMenu');
+    const toggle = document.getElementById('menuToggle');
+    if (menu) menu.classList.remove('open');
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+}
+
+function _initMainMenu() {
+    const menu = document.getElementById('mainMenu');
+    const toggle = document.getElementById('menuToggle');
+    if (!menu) return;
+    // Click a menu item -> let its onclick run, then close.
+    menu.addEventListener('click', (e) => {
+        const target = e.target;
+        if (target && target.classList && target.classList.contains('menu-item')) {
+            closeMainMenu();
+        }
+    });
+    // Click anywhere outside the menu (and not on the toggle) -> close.
+    document.addEventListener('click', (e) => {
+        if (!menu.classList.contains('open')) return;
+        if (toggle && toggle.contains(e.target)) return;
+        if (!menu.contains(e.target)) closeMainMenu();
+    });
+    // Escape -> close.
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeMainMenu();
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    _initMainMenu();
     checkAuth();
 });

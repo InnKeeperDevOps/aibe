@@ -408,9 +408,30 @@ public class ClaudeService {
             String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
             int exit = p.waitFor();
             if (exit != 0) {
-                log.warn("chown {} -> {}:{} failed (exit {}): {}",
-                        pathStr, claudeRunAsUser, claudeRunAsUser, exit,
-                        output.isEmpty() ? "(no output)" : output);
+                // "Operation not permitted" (EPERM) is the chown error when the
+                // process lacks CAP_CHOWN — the standard hardening posture for
+                // containers where the workspace volume is pre-mounted with the
+                // correct ownership/permissions by the orchestrator. In that
+                // case the chown is a redundant best-effort step: the run-as
+                // user can already read/write the path, so the failure is
+                // benign and the surrounding operation (git clone, credential
+                // materialization, etc.) succeeds. Logging it at WARN with the
+                // generic "chown failed" template makes it indistinguishable
+                // from real ownership problems (missing user, bad path) and
+                // trips auto-fix tooling into churning fix attempts on an
+                // expected configuration state. Demote the EPERM case to INFO
+                // so genuine failures still surface at WARN.
+                boolean isCapChownDropped = output.contains("Operation not permitted");
+                if (isCapChownDropped) {
+                    log.info("chown {} -> {}:{} skipped: container lacks CAP_CHOWN "
+                                    + "(expected in hardened deployments where the workspace "
+                                    + "volume is pre-mounted with correct ownership)",
+                            pathStr, claudeRunAsUser, claudeRunAsUser);
+                } else {
+                    log.warn("chown {} -> {}:{} failed (exit {}): {}",
+                            pathStr, claudeRunAsUser, claudeRunAsUser, exit,
+                            output.isEmpty() ? "(no output)" : output);
+                }
                 return false;
             }
             return true;

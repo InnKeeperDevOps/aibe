@@ -123,6 +123,7 @@ import {
 import {
     loadClaudeLogs,
     viewClaudeLog,
+    loadClaudeLogDetail,
 } from './modules/claudeLogs.js';
 
 import {
@@ -240,6 +241,7 @@ registerNavigationCallbacks({
     loadDetail,
     loadSettings,
     loadClaudeLogs,
+    loadClaudeLogDetail,
     loadClaudeQueue,
     stopClaudeQueuePolling,
     disconnectWs,
@@ -368,6 +370,7 @@ window.app = {
     // claude logs
     loadClaudeLogs,
     viewClaudeLog,
+    loadClaudeLogDetail,
 
     // claude queue
     loadClaudeQueue,

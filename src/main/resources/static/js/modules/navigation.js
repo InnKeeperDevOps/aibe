@@ -9,6 +9,7 @@ const _callbacks = {
     loadDetail: () => {},
     loadSettings: () => {},
     loadClaudeLogs: () => {},
+    loadClaudeLogDetail: () => {},
     loadClaudeQueue: () => {},
     stopClaudeQueuePolling: () => {},
     disconnectWs: () => {},
@@ -64,6 +65,7 @@ export function navigate(view, data) {
         case 'detail': _callbacks.loadDetail(data); break;
         case 'settings': _callbacks.loadSettings(); break;
         case 'claudeLogs': _callbacks.loadClaudeLogs(); break;
+        case 'claudeLogDetail': _callbacks.loadClaudeLogDetail(data); break;
         case 'claudeQueue': _callbacks.loadClaudeQueue(); break;
         case 'login': {
             const regDisabled = state.settings.registrationsEnabled === false;

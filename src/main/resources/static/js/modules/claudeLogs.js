@@ -1,7 +1,10 @@
 import { api } from './api.js';
+import { navigate } from './navigation.js';
 
-// Admin-only Claude CLI log viewer: lists recent CLI invocations and, on
-// click, shows the full command, prompt (input) and raw output (response).
+// Admin-only Claude CLI log viewer.
+// The list view (#claudeLogsView) shows recent invocations as a table.
+// Clicking a row navigates to a dedicated detail view (#claudeLogDetailView)
+// which renders the full command, prompt, and raw output.
 
 function fmtTime(iso) {
     if (!iso) return '';
@@ -42,10 +45,8 @@ function renderRow(entry) {
 export async function loadClaudeLogs() {
     const body = document.getElementById('claudeLogsBody');
     const errEl = document.getElementById('claudeLogsError');
-    const detail = document.getElementById('claudeLogDetail');
     if (!body) return;
     if (errEl) errEl.style.display = 'none';
-    if (detail) detail.style.display = 'none';
     body.innerHTML = '<tr><td colspan="6" style="padding:0.75rem;color:var(--text-muted)">Loading…</td></tr>';
 
     try {
@@ -84,28 +85,46 @@ function section(title, content, mono) {
     return wrap;
 }
 
-export async function viewClaudeLog(id) {
-    const detail = document.getElementById('claudeLogDetail');
-    if (!detail) return;
-    detail.style.display = '';
-    detail.innerHTML = '<p style="color:var(--text-muted)">Loading…</p>';
-    detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+/**
+ * Row-click handler. Navigates to the detail view, passing the log id.
+ * The actual fetch+render happens in {@link loadClaudeLogDetail} which is
+ * dispatched by navigation.js for the 'claudeLogDetail' view.
+ */
+export function viewClaudeLog(id) {
+    navigate('claudeLogDetail', id);
+}
 
+/**
+ * Fetch a single log entry and render it into #claudeLogDetailBody.
+ * Wired into navigation as the 'claudeLogDetail' handler.
+ */
+export async function loadClaudeLogDetail(id) {
+    const body = document.getElementById('claudeLogDetailBody');
+    if (!body) return;
+    body.innerHTML = '<p style="color:var(--text-muted);margin:0">Loading…</p>';
+    if (id == null) {
+        body.innerHTML = '';
+        const p = document.createElement('p');
+        p.style.color = 'var(--danger)';
+        p.textContent = 'No log entry selected.';
+        body.appendChild(p);
+        return;
+    }
     try {
         const log = await api('/claude-logs/' + id);
-        detail.innerHTML = '';
+        body.innerHTML = '';
         if (log && log.error) {
             const p = document.createElement('p');
             p.style.color = 'var(--danger)';
             p.textContent = log.error;
-            detail.appendChild(p);
+            body.appendChild(p);
             return;
         }
         const heading = document.createElement('h3');
         heading.style.marginTop = '0';
         heading.textContent = 'CLI request #' + (log.requestId != null ? log.requestId : '?')
             + ' — ' + (log.operationType || 'unknown');
-        detail.appendChild(heading);
+        body.appendChild(heading);
 
         const meta = document.createElement('p');
         meta.style.cssText = 'color:var(--text-muted);font-size:0.85rem;margin-top:0';
@@ -113,17 +132,17 @@ export async function viewClaudeLog(id) {
             + '   ·   Exit code: ' + (log.exitCode == null ? '—' : log.exitCode)
             + '   ·   Duration: ' + fmtDuration(log.durationMs)
             + '   ·   ' + fmtTime(log.createdAt);
-        detail.appendChild(meta);
+        body.appendChild(meta);
 
-        if (log.workingDir) detail.appendChild(section('Working directory', log.workingDir, true));
-        detail.appendChild(section('Command', log.command, true));
-        detail.appendChild(section('Prompt (input)', log.prompt, true));
-        detail.appendChild(section('Raw output (response)', log.rawOutput, true));
+        if (log.workingDir) body.appendChild(section('Working directory', log.workingDir, true));
+        body.appendChild(section('Command', log.command, true));
+        body.appendChild(section('Prompt (input)', log.prompt, true));
+        body.appendChild(section('Raw output (response)', log.rawOutput, true));
     } catch (e) {
-        detail.innerHTML = '';
+        body.innerHTML = '';
         const p = document.createElement('p');
         p.style.color = 'var(--danger)';
         p.textContent = 'Could not load log entry: ' + e.message;
-        detail.appendChild(p);
+        body.appendChild(p);
     }
 }

@@ -5,6 +5,7 @@ import com.sitemanager.model.SuggestionMessage;
 import com.sitemanager.model.enums.ExpertRole;
 import com.sitemanager.model.enums.SenderType;
 import com.sitemanager.model.enums.SuggestionStatus;
+import com.sitemanager.repository.ExpertReviewCostRepository;
 import com.sitemanager.repository.PlanTaskRepository;
 import com.sitemanager.repository.SuggestionMessageRepository;
 import com.sitemanager.repository.SuggestionRepository;
@@ -55,6 +56,10 @@ class SuggestionServiceApprovalTrackerTest {
         when(claudeService.expertReview(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(new CompletableFuture<>());
 
+        SpendingLimitService spendingLimitService = mock(SpendingLimitService.class);
+        when(spendingLimitService.checkCanStartReview(any()))
+                .thenReturn(SpendingLimitService.LimitCheck.allowed());
+
         service = new ExpertReviewService(
                 suggestionRepository,
                 messageRepository,
@@ -64,7 +69,11 @@ class SuggestionServiceApprovalTrackerTest {
                 webSocketHandler,
                 userNotificationHandler,
                 slackNotificationService,
-                userRepository
+                userRepository,
+                mock(ExpertReviewCostRepository.class),
+                mock(CostRollupService.class),
+                spendingLimitService,
+                mock(SpendingAlertService.class)
         );
     }
 

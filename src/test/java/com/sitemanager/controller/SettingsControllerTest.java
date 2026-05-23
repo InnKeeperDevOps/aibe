@@ -296,6 +296,132 @@ class SettingsControllerTest {
     }
 
     @Test
+    void getSettings_spendingLimits_unsetByDefault() throws Exception {
+        mockMvc.perform(get("/api/settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxCostPerSuggestionUsd").doesNotExist())
+                .andExpect(jsonPath("$.maxTotalCostUsd").doesNotExist())
+                .andExpect(jsonPath("$.globalCostResetPeriod").value("NEVER"));
+    }
+
+    @Test
+    void updateSettings_spendingLimits_asAdmin_savedAndReturned() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        mockMvc.perform(put("/api/settings")
+                        .session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                                "\"siteName\":\"Test\"," +
+                                "\"maxCostPerSuggestionUsd\":5.50," +
+                                "\"maxTotalCostUsd\":250.00," +
+                                "\"globalCostResetPeriod\":\"DAILY\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxCostPerSuggestionUsd").value(5.50))
+                .andExpect(jsonPath("$.maxTotalCostUsd").value(250.00))
+                .andExpect(jsonPath("$.globalCostResetPeriod").value("DAILY"));
+
+        mockMvc.perform(get("/api/settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxCostPerSuggestionUsd").value(5.50))
+                .andExpect(jsonPath("$.maxTotalCostUsd").value(250.00))
+                .andExpect(jsonPath("$.globalCostResetPeriod").value("DAILY"));
+    }
+
+    @Test
+    void updateSettings_spendingLimits_asNonAdmin_returns403() throws Exception {
+        mockMvc.perform(put("/api/settings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"maxCostPerSuggestionUsd\":1.00,\"maxTotalCostUsd\":50.00," +
+                                "\"globalCostResetPeriod\":\"MONTHLY\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateSettings_spendingLimits_canBeAdjustedRepeatedly() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        String first = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"maxCostPerSuggestionUsd\":1.00," +
+                "\"maxTotalCostUsd\":10.00,\"globalCostResetPeriod\":\"MONTHLY\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(first))
+                .andExpect(status().isOk());
+
+        String second = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"maxCostPerSuggestionUsd\":7.50," +
+                "\"maxTotalCostUsd\":500.00,\"globalCostResetPeriod\":\"NEVER\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(second))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxCostPerSuggestionUsd").value(7.50))
+                .andExpect(jsonPath("$.maxTotalCostUsd").value(500.00))
+                .andExpect(jsonPath("$.globalCostResetPeriod").value("NEVER"));
+    }
+
+    @Test
+    void updateSettings_spendingLimits_canBeCleared() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        String set = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"maxCostPerSuggestionUsd\":5.00," +
+                "\"maxTotalCostUsd\":100.00,\"globalCostResetPeriod\":\"DAILY\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(set))
+                .andExpect(status().isOk());
+
+        String clear = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"maxCostPerSuggestionUsd\":null," +
+                "\"maxTotalCostUsd\":null,\"globalCostResetPeriod\":\"NEVER\"}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(clear))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxCostPerSuggestionUsd").doesNotExist())
+                .andExpect(jsonPath("$.maxTotalCostUsd").doesNotExist())
+                .andExpect(jsonPath("$.globalCostResetPeriod").value("NEVER"));
+    }
+
+    @Test
+    void updateSettings_negativePerSuggestionLimit_returns400() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        String body = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"maxCostPerSuggestionUsd\":-1.00}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").exists());
+    }
+
+    @Test
+    void updateSettings_negativeTotalLimit_returns400() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        String body = "{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                "\"siteName\":\"Test\",\"maxTotalCostUsd\":-50.00}";
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void getSettings_requireRegistrationApproval_reflectsPersistedValue() throws Exception {
         MockHttpSession session = new MockHttpSession();
         session.setAttribute("username", "admin");
@@ -311,5 +437,41 @@ class SettingsControllerTest {
         mockMvc.perform(get("/api/settings"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.requireRegistrationApproval").value(true));
+    }
+
+    @Test
+    void getSettings_spendingAlertConfig_defaultsExposed() throws Exception {
+        mockMvc.perform(get("/api/settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.spendingAlertsEnabled").value(true))
+                .andExpect(jsonPath("$.spendingAlertThresholds").value("75,90"));
+    }
+
+    @Test
+    void updateSettings_spendingAlertConfig_asAdmin_savedAndReturned() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("username", "admin");
+        session.setAttribute("role", "ROOT_ADMIN");
+
+        mockMvc.perform(put("/api/settings").session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"allowAnonymousSuggestions\":true,\"allowVoting\":true," +
+                                "\"suggestionTimeoutMinutes\":1440,\"requireApproval\":true," +
+                                "\"siteName\":\"Test\"," +
+                                "\"spendingAlertsEnabled\":false," +
+                                "\"spendingAlertThresholds\":\"50,80,95\"," +
+                                "\"spendingAlertRecipients\":\"oncall@example.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.spendingAlertsEnabled").value(false))
+                .andExpect(jsonPath("$.spendingAlertThresholds").value("50,80,95"))
+                .andExpect(jsonPath("$.spendingAlertRecipients").value("oncall@example.com"));
+    }
+
+    @Test
+    void updateSettings_spendingAlertConfig_asNonAdmin_returns403() throws Exception {
+        mockMvc.perform(put("/api/settings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spendingAlertsEnabled\":false}"))
+                .andExpect(status().isForbidden());
     }
 }

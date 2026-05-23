@@ -1,11 +1,14 @@
 package com.sitemanager.service;
 
 import com.sitemanager.model.SiteSettings;
+import com.sitemanager.model.enums.CostResetPeriod;
 import com.sitemanager.repository.SiteSettingsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+
+import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -220,6 +223,177 @@ class SiteSettingsServiceTest {
     }
 
     @Test
+    void getSettings_spendingLimits_unsetByDefault() {
+        SiteSettings settings = settingsService.getSettings();
+
+        assertNull(settings.getMaxCostPerSuggestionUsd());
+        assertNull(settings.getMaxTotalCostUsd());
+        assertEquals(CostResetPeriod.NEVER, settings.getGlobalCostResetPeriod());
+    }
+
+    @Test
+    void updateSettings_perSuggestionLimit_persisted() {
+        SiteSettings update = new SiteSettings();
+        update.setMaxCostPerSuggestionUsd(new BigDecimal("5.25"));
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals(0, new BigDecimal("5.25").compareTo(result.getMaxCostPerSuggestionUsd()));
+        assertEquals(0, new BigDecimal("5.25").compareTo(
+                settingsService.getSettings().getMaxCostPerSuggestionUsd()));
+    }
+
+    @Test
+    void updateSettings_totalLimit_persisted() {
+        SiteSettings update = new SiteSettings();
+        update.setMaxTotalCostUsd(new BigDecimal("100.00"));
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals(0, new BigDecimal("100.00").compareTo(result.getMaxTotalCostUsd()));
+    }
+
+    @Test
+    void updateSettings_globalResetPeriod_canBeSetToDaily() {
+        SiteSettings update = new SiteSettings();
+        update.setGlobalCostResetPeriod(CostResetPeriod.DAILY);
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals(CostResetPeriod.DAILY, result.getGlobalCostResetPeriod());
+    }
+
+    @Test
+    void updateSettings_globalResetPeriod_canBeSetToMonthly() {
+        SiteSettings update = new SiteSettings();
+        update.setGlobalCostResetPeriod(CostResetPeriod.MONTHLY);
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals(CostResetPeriod.MONTHLY, result.getGlobalCostResetPeriod());
+    }
+
+    @Test
+    void updateSettings_globalResetPeriod_canBeChangedBackToNever() {
+        SiteSettings first = new SiteSettings();
+        first.setGlobalCostResetPeriod(CostResetPeriod.MONTHLY);
+        settingsService.updateSettings(first);
+
+        SiteSettings second = new SiteSettings();
+        second.setGlobalCostResetPeriod(CostResetPeriod.NEVER);
+        SiteSettings result = settingsService.updateSettings(second);
+
+        assertEquals(CostResetPeriod.NEVER, result.getGlobalCostResetPeriod());
+    }
+
+    @Test
+    void updateSettings_globalResetPeriod_nullDefaultsToNever() {
+        SiteSettings update = new SiteSettings();
+        update.setGlobalCostResetPeriod(null);
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals(CostResetPeriod.NEVER, result.getGlobalCostResetPeriod());
+    }
+
+    @Test
+    void updateSettings_perSuggestionLimit_canBeClearedWithNull() {
+        SiteSettings first = new SiteSettings();
+        first.setMaxCostPerSuggestionUsd(new BigDecimal("5.00"));
+        settingsService.updateSettings(first);
+
+        SiteSettings clear = new SiteSettings();
+        clear.setMaxCostPerSuggestionUsd(null);
+        SiteSettings result = settingsService.updateSettings(clear);
+
+        assertNull(result.getMaxCostPerSuggestionUsd());
+    }
+
+    @Test
+    void updateSettings_totalLimit_canBeClearedWithNull() {
+        SiteSettings first = new SiteSettings();
+        first.setMaxTotalCostUsd(new BigDecimal("250.00"));
+        settingsService.updateSettings(first);
+
+        SiteSettings clear = new SiteSettings();
+        clear.setMaxTotalCostUsd(null);
+        SiteSettings result = settingsService.updateSettings(clear);
+
+        assertNull(result.getMaxTotalCostUsd());
+    }
+
+    @Test
+    void updateSettings_perSuggestionLimit_canBeAdjustedRepeatedly() {
+        SiteSettings first = new SiteSettings();
+        first.setMaxCostPerSuggestionUsd(new BigDecimal("1.00"));
+        settingsService.updateSettings(first);
+
+        SiteSettings second = new SiteSettings();
+        second.setMaxCostPerSuggestionUsd(new BigDecimal("2.50"));
+        settingsService.updateSettings(second);
+
+        SiteSettings third = new SiteSettings();
+        third.setMaxCostPerSuggestionUsd(new BigDecimal("10.00"));
+        SiteSettings result = settingsService.updateSettings(third);
+
+        assertEquals(0, new BigDecimal("10.00").compareTo(result.getMaxCostPerSuggestionUsd()));
+    }
+
+    @Test
+    void updateSettings_perSuggestionLimit_zeroAllowed() {
+        SiteSettings update = new SiteSettings();
+        update.setMaxCostPerSuggestionUsd(BigDecimal.ZERO);
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(result.getMaxCostPerSuggestionUsd()));
+    }
+
+    @Test
+    void updateSettings_perSuggestionLimit_negativeRejected() {
+        SiteSettings update = new SiteSettings();
+        update.setMaxCostPerSuggestionUsd(new BigDecimal("-1.00"));
+
+        assertThrows(IllegalArgumentException.class, () -> settingsService.updateSettings(update));
+    }
+
+    @Test
+    void updateSettings_totalLimit_negativeRejected() {
+        SiteSettings update = new SiteSettings();
+        update.setMaxTotalCostUsd(new BigDecimal("-0.01"));
+
+        assertThrows(IllegalArgumentException.class, () -> settingsService.updateSettings(update));
+    }
+
+    @Test
+    void updateSettings_negativeLimit_doesNotMutateStoredValue() {
+        SiteSettings first = new SiteSettings();
+        first.setMaxCostPerSuggestionUsd(new BigDecimal("3.00"));
+        settingsService.updateSettings(first);
+
+        SiteSettings bad = new SiteSettings();
+        bad.setMaxCostPerSuggestionUsd(new BigDecimal("-5.00"));
+        bad.setSiteName("Should Not Save");
+        assertThrows(IllegalArgumentException.class, () -> settingsService.updateSettings(bad));
+
+        SiteSettings reloaded = settingsService.getSettings();
+        assertEquals(0, new BigDecimal("3.00").compareTo(reloaded.getMaxCostPerSuggestionUsd()));
+        assertNotEquals("Should Not Save", reloaded.getSiteName());
+    }
+
+    @Test
+    void updateSettings_spendingLimits_supportSubCentPrecision() {
+        SiteSettings update = new SiteSettings();
+        update.setMaxCostPerSuggestionUsd(new BigDecimal("0.001234"));
+        update.setMaxTotalCostUsd(new BigDecimal("0.567890"));
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals(0, new BigDecimal("0.001234").compareTo(result.getMaxCostPerSuggestionUsd()));
+        assertEquals(0, new BigDecimal("0.567890").compareTo(result.getMaxTotalCostUsd()));
+    }
+
+    @Test
     void updateSettings_gitSshKeyOmitted_preservesGeneratedPublicKey() {
         settingsService.generateSshKeyPair();
         String storedPublic = settingsService.getSettings().getGitSshPublicKey();
@@ -232,5 +406,55 @@ class SiteSettingsServiceTest {
         SiteSettings result = settingsService.updateSettings(update);
 
         assertEquals(storedPublic, result.getGitSshPublicKey());
+    }
+
+    // ── Spending alert configuration ─────────────────────────────────────────
+
+    @Test
+    void getSettings_spendingAlertsEnabled_trueByDefault() {
+        SiteSettings settings = settingsService.getSettings();
+        assertTrue(settings.isSpendingAlertsEnabled());
+    }
+
+    @Test
+    void getSettings_spendingAlertThresholds_defaultsTo75And90() {
+        SiteSettings settings = settingsService.getSettings();
+        assertEquals("75,90", settings.getSpendingAlertThresholds());
+    }
+
+    @Test
+    void getSettings_spendingAlertRecipients_nullByDefault() {
+        SiteSettings settings = settingsService.getSettings();
+        assertNull(settings.getSpendingAlertRecipients());
+    }
+
+    @Test
+    void updateSettings_spendingAlertsEnabled_canBeDisabled() {
+        SiteSettings update = new SiteSettings();
+        update.setSpendingAlertsEnabled(false);
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertFalse(result.isSpendingAlertsEnabled());
+    }
+
+    @Test
+    void updateSettings_spendingAlertThresholds_canBeChanged() {
+        SiteSettings update = new SiteSettings();
+        update.setSpendingAlertThresholds("60,80,95");
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals("60,80,95", result.getSpendingAlertThresholds());
+    }
+
+    @Test
+    void updateSettings_spendingAlertRecipients_persistedFromServerSideConfig() {
+        SiteSettings update = new SiteSettings();
+        update.setSpendingAlertRecipients("oncall@example.com\ncarol");
+
+        SiteSettings result = settingsService.updateSettings(update);
+
+        assertEquals("oncall@example.com\ncarol", result.getSpendingAlertRecipients());
     }
 }

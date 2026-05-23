@@ -32,7 +32,11 @@ public class SettingsController {
         if (!permissionService.hasPermission(session, Permission.MANAGE_SETTINGS)) {
             return ResponseEntity.status(403).body(Map.of("error", "Admin access required"));
         }
-        return ResponseEntity.ok(settingsService.updateSettings(settings));
+        try {
+            return ResponseEntity.ok(settingsService.updateSettings(settings));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @PostMapping("/git-ssh-key/generate")

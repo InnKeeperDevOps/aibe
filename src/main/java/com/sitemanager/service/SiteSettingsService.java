@@ -1,11 +1,16 @@
 package com.sitemanager.service;
 
 import com.sitemanager.model.SiteSettings;
+import com.sitemanager.model.enums.CostResetPeriod;
 import com.sitemanager.repository.SiteSettingsRepository;
+import com.sitemanager.repository.SpendingAlertStateRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.util.Objects;
 
 @Service
 public class SiteSettingsService {
@@ -15,13 +20,16 @@ public class SiteSettingsService {
     private final SiteSettingsRepository settingsRepository;
     private final ClaudeService claudeService;
     private final ApplicationEventPublisher eventPublisher;
+    private final SpendingAlertStateRepository alertStateRepository;
 
     public SiteSettingsService(SiteSettingsRepository settingsRepository,
                                ClaudeService claudeService,
-                               ApplicationEventPublisher eventPublisher) {
+                               ApplicationEventPublisher eventPublisher,
+                               SpendingAlertStateRepository alertStateRepository) {
         this.settingsRepository = settingsRepository;
         this.claudeService = claudeService;
         this.eventPublisher = eventPublisher;
+        this.alertStateRepository = alertStateRepository;
     }
 
     public SiteSettings getSettings() {
@@ -44,7 +52,12 @@ public class SiteSettingsService {
     }
 
     public SiteSettings updateSettings(SiteSettings updated) {
+        validateSpendLimits(updated);
         SiteSettings current = getSettings();
+        BigDecimal previousPerSuggestionLimit = current.getMaxCostPerSuggestionUsd();
+        BigDecimal previousTotalLimit = current.getMaxTotalCostUsd();
+        CostResetPeriod previousResetPeriod = current.getGlobalCostResetPeriod();
+        String previousThresholds = current.getSpendingAlertThresholds();
         current.setAllowAnonymousSuggestions(updated.isAllowAnonymousSuggestions());
         current.setAllowVoting(updated.isAllowVoting());
         current.setTargetRepoUrl(updated.getTargetRepoUrl());
@@ -61,6 +74,15 @@ public class SiteSettingsService {
         current.setRequireRegistrationApproval(updated.isRequireRegistrationApproval());
         current.setRegistrationsEnabled(updated.isRegistrationsEnabled());
         current.setManagedFolders(updated.getManagedFolders());
+        current.setMaxCostPerSuggestionUsd(updated.getMaxCostPerSuggestionUsd());
+        current.setMaxTotalCostUsd(updated.getMaxTotalCostUsd());
+        current.setGlobalCostResetPeriod(
+                updated.getGlobalCostResetPeriod() != null
+                        ? updated.getGlobalCostResetPeriod()
+                        : CostResetPeriod.NEVER);
+        current.setSpendingAlertsEnabled(updated.isSpendingAlertsEnabled());
+        current.setSpendingAlertThresholds(updated.getSpendingAlertThresholds());
+        current.setSpendingAlertRecipients(updated.getSpendingAlertRecipients());
         // SSH key: only update when caller provides a non-null value, so blank submissions
         // from the UI (where the existing key is never echoed back) preserve the stored key.
         // An explicit empty string clears the key.
@@ -74,6 +96,12 @@ public class SiteSettingsService {
         // Claude credentials are managed exclusively via /api/claude-cli-login; never
         // clobber them from a generic settings update.
         SiteSettings saved = settingsRepository.save(current);
+
+        reArmSpendingAlertsIfNeeded(
+                previousPerSuggestionLimit, saved.getMaxCostPerSuggestionUsd(),
+                previousTotalLimit, saved.getMaxTotalCostUsd(),
+                previousResetPeriod, saved.getGlobalCostResetPeriod(),
+                previousThresholds, saved.getSpendingAlertThresholds());
 
         // Re-clone the target repository into main-repo/ so files are up to date
         String repoUrl = saved.getTargetRepoUrl();
@@ -90,5 +118,59 @@ public class SiteSettingsService {
         }
 
         return saved;
+    }
+
+    private void validateSpendLimits(SiteSettings updated) {
+        if (updated.getMaxCostPerSuggestionUsd() != null
+                && updated.getMaxCostPerSuggestionUsd().signum() < 0) {
+            throw new IllegalArgumentException("Per-suggestion spending limit cannot be negative");
+        }
+        if (updated.getMaxTotalCostUsd() != null
+                && updated.getMaxTotalCostUsd().signum() < 0) {
+            throw new IllegalArgumentException("Total spending limit cannot be negative");
+        }
+    }
+
+    /**
+     * When the configured limits or alert thresholds change, drop the
+     * recorded alert-fired rows so the next cost recording can deliver
+     * fresh warnings under the new ceiling.
+     */
+    private void reArmSpendingAlertsIfNeeded(BigDecimal previousPerSuggestionLimit,
+                                             BigDecimal newPerSuggestionLimit,
+                                             BigDecimal previousTotalLimit,
+                                             BigDecimal newTotalLimit,
+                                             CostResetPeriod previousResetPeriod,
+                                             CostResetPeriod newResetPeriod,
+                                             String previousThresholds,
+                                             String newThresholds) {
+        try {
+            boolean perSuggestionChanged =
+                    !valuesEqual(previousPerSuggestionLimit, newPerSuggestionLimit)
+                    || !Objects.equals(previousThresholds, newThresholds);
+            boolean globalChanged =
+                    !valuesEqual(previousTotalLimit, newTotalLimit)
+                    || !Objects.equals(previousResetPeriod, newResetPeriod)
+                    || !Objects.equals(previousThresholds, newThresholds);
+
+            if (globalChanged) {
+                alertStateRepository.deleteAllGlobalAlerts();
+            }
+            if (perSuggestionChanged) {
+                // Per-suggestion alerts target individual suggestions; the
+                // simplest correct re-arming is to drop every per-suggestion
+                // row so any suggestion with refreshed headroom can fire
+                // fresh warnings under the new cap.
+                alertStateRepository.deleteAllPerSuggestionAlerts();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to re-arm spending alerts after settings change: {}", e.getMessage());
+        }
+    }
+
+    private static boolean valuesEqual(BigDecimal a, BigDecimal b) {
+        if (a == null && b == null) return true;
+        if (a == null || b == null) return false;
+        return a.compareTo(b) == 0;
     }
 }

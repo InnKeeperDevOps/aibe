@@ -5,6 +5,7 @@ import com.sitemanager.model.SuggestionMessage;
 import com.sitemanager.model.enums.ExpertRole;
 import com.sitemanager.model.enums.SenderType;
 import com.sitemanager.model.enums.SuggestionStatus;
+import com.sitemanager.repository.ExpertReviewCostRepository;
 import com.sitemanager.repository.PlanTaskRepository;
 import com.sitemanager.repository.SuggestionMessageRepository;
 import com.sitemanager.repository.SuggestionRepository;
@@ -74,6 +75,10 @@ class SuggestionServiceApprovedExpertFilterTest {
                 siteSettingsService
         );
 
+        SpendingLimitService spendingLimitService = mock(SpendingLimitService.class);
+        when(spendingLimitService.checkCanStartReview(any()))
+                .thenReturn(SpendingLimitService.LimitCheck.allowed());
+
         service = new ExpertReviewService(
                 suggestionRepository,
                 messageRepository,
@@ -83,7 +88,11 @@ class SuggestionServiceApprovedExpertFilterTest {
                 webSocketHandler,
                 userNotificationHandler,
                 slackNotificationService,
-                userRepository
+                userRepository,
+                mock(ExpertReviewCostRepository.class),
+                mock(CostRollupService.class),
+                spendingLimitService,
+                mock(SpendingAlertService.class)
         );
     }
 

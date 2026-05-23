@@ -46,6 +46,15 @@ public class ClaudeService {
     private final AtomicLong requestCounter = new AtomicLong(0);
 
     /**
+     * Most recent cost record per in-memory session ID. Populated whenever a
+     * CLI call returns a parseable result envelope; consumed by callers that
+     * need to persist what the call cost (e.g. expert reviews). Entries are
+     * removed by {@link #pollSessionCost(String)} so each cost is consumed
+     * exactly once and the map does not grow unbounded.
+     */
+    private final ConcurrentMap<String, ClaudeCostInfo> sessionCosts = new ConcurrentHashMap<>();
+
+    /**
      * Every CLI call that has entered {@link #sendToClaude} but not yet finished —
      * keyed by requestId. Powers the admin Claude Queue page: callers can see what
      * is waiting on rate limit / concurrency / actively running.
@@ -722,6 +731,31 @@ public class ClaudeService {
         snap.put("awaitingRateLimit", awaitingRateLimit);
         snap.put("requests", requests);
         return snap;
+    }
+
+    /**
+     * Store the parsed cost data for {@code sessionId}, replacing any prior entry.
+     * Package-private so unit tests can seed values without running a CLI call.
+     */
+    void recordSessionCost(String sessionId, ClaudeCostInfo cost) {
+        if (sessionId == null || cost == null) {
+            return;
+        }
+        sessionCosts.put(sessionId, cost);
+    }
+
+    /**
+     * Consume the cost record produced by the most recent CLI call for
+     * {@code sessionId}. Returns {@code null} when no cost has been recorded
+     * (e.g. the CLI call failed before emitting a parseable envelope).
+     * Removes the entry so subsequent calls see {@code null} — each cost is
+     * intended to be persisted exactly once.
+     */
+    public ClaudeCostInfo pollSessionCost(String sessionId) {
+        if (sessionId == null) {
+            return null;
+        }
+        return sessionCosts.remove(sessionId);
     }
 
     /** Number of timestamps in the rate-limit circular buffer that fall within the last 60s. */
@@ -1524,6 +1558,11 @@ public class ClaudeService {
                 if (root.has("result")) {
                     resultText = root.get("result").asText();
                 }
+
+                // Capture cost/usage so callers (e.g. expert reviews) can
+                // persist what this call cost. Stored even on error envelopes
+                // so partial usage is not lost.
+                recordSessionCost(sessionId, ClaudeCostInfo.fromCliJson(root, model));
 
                 // Check for error responses (e.g., dead session)
                 if (root.has("is_error") && root.get("is_error").asBoolean()) {

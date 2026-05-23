@@ -7,6 +7,7 @@ import com.sitemanager.model.enums.ExpertRole;
 import com.sitemanager.model.enums.SenderType;
 import com.sitemanager.model.enums.SuggestionStatus;
 import com.sitemanager.model.enums.TaskStatus;
+import com.sitemanager.repository.ExpertReviewCostRepository;
 import com.sitemanager.repository.PlanTaskRepository;
 import com.sitemanager.repository.SuggestionMessageRepository;
 import com.sitemanager.repository.SuggestionRepository;
@@ -42,6 +43,8 @@ class ExpertReviewServiceTest {
     private ClaudeService claudeService;
     private SlackNotificationService slackNotificationService;
     private SuggestionMessagingHelper messagingHelper;
+    private ExpertReviewCostRepository costRepository;
+    private SpendingLimitService spendingLimitService;
     private ExpertReviewService service;
 
     @BeforeEach
@@ -55,6 +58,11 @@ class ExpertReviewServiceTest {
         UserNotificationWebSocketHandler userNotificationHandler = mock(UserNotificationWebSocketHandler.class);
         UserRepository userRepository = mock(UserRepository.class);
         messagingHelper = mock(SuggestionMessagingHelper.class);
+        costRepository = mock(ExpertReviewCostRepository.class);
+        when(costRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        spendingLimitService = mock(SpendingLimitService.class);
+        when(spendingLimitService.checkCanStartReview(any()))
+                .thenReturn(SpendingLimitService.LimitCheck.allowed());
 
         when(slackNotificationService.sendNotification(any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
@@ -87,7 +95,11 @@ class ExpertReviewServiceTest {
                 webSocketHandler,
                 userNotificationHandler,
                 slackNotificationService,
-                userRepository
+                userRepository,
+                costRepository,
+                mock(CostRollupService.class),
+                spendingLimitService,
+                mock(SpendingAlertService.class)
         );
     }
 

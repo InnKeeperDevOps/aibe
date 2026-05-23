@@ -73,6 +73,55 @@ public class SlackNotificationService {
         return CompletableFuture.runAsync(() -> doSendApprovalNeeded(suggestion));
     }
 
+    /**
+     * Send a proactive spending alert to the configured webhook.
+     *
+     * <p>{@code title} and {@code body} are expected to already have any
+     * user-supplied content sanitized by the producer — this method only
+     * applies JSON-string escaping so the payload remains valid, not HTML
+     * escaping. Sending is best-effort: returns a completed future even if
+     * the webhook is missing, fails the SSRF guard, or rejects the post.
+     */
+    public CompletableFuture<Void> sendSpendingAlert(String title, String body) {
+        return CompletableFuture.runAsync(() -> doSendSpendingAlert(title, body));
+    }
+
+    private void doSendSpendingAlert(String title, String body) {
+        String webhookUrl = siteSettingsService.getSettings().getSlackWebhookUrl();
+
+        if (webhookUrl == null || webhookUrl.isBlank()) {
+            return;
+        }
+
+        if (!webhookUrl.startsWith(ALLOWED_WEBHOOK_PREFIX)) {
+            log.warn("Slack webhook URL does not start with '{}' — skipping notification to prevent SSRF", ALLOWED_WEBHOOK_PREFIX);
+            return;
+        }
+
+        String safeTitle = escapeJson(title != null ? title : "Spending alert");
+        String safeBody = escapeJson(body != null ? body : "");
+        String payload = "{\"blocks\":["
+                + "{\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\":warning: " + safeTitle + "\",\"emoji\":true}},"
+                + "{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"" + safeBody + "\"}}"
+                + "]}";
+
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(webhookUrl))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(payload))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.warn("Slack webhook returned non-success status {}: {}", response.statusCode(), response.body());
+            }
+        } catch (Exception e) {
+            log.warn("Failed to send Slack spending alert: {}", e.getMessage());
+        }
+    }
+
     private void doSendApprovalNeeded(Suggestion suggestion) {
         String webhookUrl = siteSettingsService.getSettings().getSlackWebhookUrl();
 

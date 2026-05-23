@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.sitemanager.dto.ClarificationRequest;
+import com.sitemanager.model.ExpertReviewCost;
 import com.sitemanager.model.PlanTask;
 import com.sitemanager.model.Suggestion;
 import com.sitemanager.model.SuggestionMessage;
@@ -18,6 +19,7 @@ import com.sitemanager.model.enums.SenderType;
 import com.sitemanager.model.enums.SuggestionStatus;
 import com.sitemanager.model.enums.TaskStatus;
 import com.sitemanager.model.enums.UserRole;
+import com.sitemanager.repository.ExpertReviewCostRepository;
 import com.sitemanager.repository.PlanTaskRepository;
 import com.sitemanager.repository.SuggestionMessageRepository;
 import com.sitemanager.repository.SuggestionRepository;
@@ -66,6 +68,10 @@ public class ExpertReviewService {
     private final UserNotificationWebSocketHandler userNotificationHandler;
     private final SlackNotificationService slackNotificationService;
     private final UserRepository userRepository;
+    private final ExpertReviewCostRepository costRepository;
+    private final CostRollupService costRollupService;
+    private final SpendingLimitService spendingLimitService;
+    private final SpendingAlertService spendingAlertService;
 
     public ExpertReviewService(SuggestionRepository suggestionRepository,
                                SuggestionMessageRepository messageRepository,
@@ -75,7 +81,11 @@ public class ExpertReviewService {
                                SuggestionWebSocketHandler webSocketHandler,
                                UserNotificationWebSocketHandler userNotificationHandler,
                                SlackNotificationService slackNotificationService,
-                               UserRepository userRepository) {
+                               UserRepository userRepository,
+                               ExpertReviewCostRepository costRepository,
+                               CostRollupService costRollupService,
+                               SpendingLimitService spendingLimitService,
+                               SpendingAlertService spendingAlertService) {
         this.suggestionRepository = suggestionRepository;
         this.messageRepository = messageRepository;
         this.planTaskRepository = planTaskRepository;
@@ -85,6 +95,89 @@ public class ExpertReviewService {
         this.userNotificationHandler = userNotificationHandler;
         this.slackNotificationService = slackNotificationService;
         this.userRepository = userRepository;
+        this.costRepository = costRepository;
+        this.costRollupService = costRollupService;
+        this.spendingLimitService = spendingLimitService;
+        this.spendingAlertService = spendingAlertService;
+    }
+
+    /**
+     * Verify the budget before starting a new review. When refused, posts a
+     * system message to the suggestion explaining why and pauses it in
+     * place — any review already running is allowed to finish naturally
+     * because this check only fires before a new CLI call is launched.
+     *
+     * @return {@code true} if the new review is blocked and must not start,
+     *         {@code false} when the budget check passes.
+     */
+    private boolean isBlockedBySpendingLimit(Long suggestionId) {
+        if (suggestionId == null) return false;
+        SpendingLimitService.LimitCheck check;
+        try {
+            check = spendingLimitService.checkCanStartReview(suggestionId);
+        } catch (Exception e) {
+            log.warn("Spending limit check failed for suggestion {}, allowing review: {}",
+                    suggestionId, e.getMessage());
+            return false;
+        }
+        if (check == null || check.isAllowed()) return false;
+        pauseForSpendingLimit(suggestionId, check.getReason());
+        return true;
+    }
+
+    private void pauseForSpendingLimit(Long suggestionId, String reason) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId).orElse(null);
+        if (suggestion != null) {
+            suggestion.setCurrentPhase("Paused — spending limit reached");
+            suggestion.setLastActivityAt(Instant.now());
+            suggestionRepository.save(suggestion);
+            broadcastUpdate(suggestion);
+        }
+        addMessage(suggestionId, SenderType.SYSTEM, "System", reason);
+        log.info("[BUDGET] Pausing suggestion {} — {}", suggestionId, reason);
+    }
+
+    /**
+     * Persist a cost record for one expert review CLI call. Looks up the cost
+     * data {@link ClaudeService} captured for {@code reviewSessionId} and
+     * stores it as a single row. Best-effort: if the CLI call did not emit a
+     * parseable envelope, or persistence fails, the review continues — cost
+     * tracking must never break the review pipeline.
+     */
+    void recordReviewCost(Long suggestionId, String expertDisplayName,
+                          String reviewSessionId, String operationType) {
+        if (suggestionId == null || expertDisplayName == null || reviewSessionId == null) {
+            return;
+        }
+        try {
+            ClaudeCostInfo cost = claudeService.pollSessionCost(reviewSessionId);
+            if (cost == null) {
+                log.debug("No cost data available for review session {} (expert={})",
+                        reviewSessionId, expertDisplayName);
+                return;
+            }
+            ExpertReviewCost costRecord = new ExpertReviewCost();
+            costRecord.setSuggestionId(suggestionId);
+            costRecord.setExpertName(expertDisplayName);
+            costRecord.setOperationType(operationType);
+            costRecord.setReviewSessionId(reviewSessionId);
+            costRecord.setModel(cost.getModel());
+            costRecord.setInputTokens(cost.getInputTokens());
+            costRecord.setOutputTokens(cost.getOutputTokens());
+            costRecord.setCacheReadInputTokens(cost.getCacheReadInputTokens());
+            costRecord.setCacheCreationInputTokens(cost.getCacheCreationInputTokens());
+            costRecord.setCostUsd(cost.getCostUsd());
+            costRecord.setDurationMs(cost.getDurationMs());
+            costRepository.save(costRecord);
+            log.info("[REVIEW-COST] suggestion={} expert={} cost=${} tokens={} durationMs={}",
+                    suggestionId, expertDisplayName,
+                    cost.getCostUsd().toPlainString(), cost.getTotalTokens(), cost.getDurationMs());
+            costRollupService.broadcastUpdatedTotals(suggestionId);
+            spendingAlertService.evaluateAfterCostRecorded(suggestionId);
+        } catch (Exception e) {
+            log.warn("Failed to persist review cost for suggestion {} expert {}: {}",
+                    suggestionId, expertDisplayName, e.getMessage());
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -252,6 +345,8 @@ public class ExpertReviewService {
                         ? root.get("proposedChanges").asText() : "";
                 ExpertRole reviewer = pickChangeReviewer(expert);
 
+                if (isBlockedBySpendingLimit(suggestionId)) return;
+
                 suggestion.setCurrentPhase(reviewer.getDisplayName() + " is evaluating " +
                         expert.getDisplayName() + "'s recommendations...");
                 suggestionRepository.save(suggestion);
@@ -273,6 +368,8 @@ public class ExpertReviewService {
                         currentRound,
                         suggestion.getOwnerLockedSections()
                 ).thenAccept(reviewerResponse -> {
+                    recordReviewCost(suggestionId, reviewer.getDisplayName(), reviewerSessionId,
+                            "review-feedback:" + reviewer.getDisplayName() + "<-" + expert.getDisplayName());
                     handleReviewerResponse(suggestionId, reviewerResponse, expert,
                             response, analysis, message);
                 });
@@ -549,6 +646,8 @@ public class ExpertReviewService {
         prompt.append("\"questions\": [...], \"message\": \"...\"}\n\n");
         prompt.append("COMMUNICATION RULES: All messages MUST be plain, non-technical language. NEVER mention technologies or implementation details.");
 
+        if (isBlockedBySpendingLimit(suggestionId)) return;
+
         suggestion.setCurrentPhase(expert.getDisplayName() + " is reviewing your answers...");
         suggestionRepository.save(suggestion);
         broadcastUpdate(suggestion);
@@ -563,6 +662,8 @@ public class ExpertReviewService {
                         "{\"type\":\"progress\",\"content\":\"" +
                                 escapeJson(progress) + "\"}")
         ).thenAccept(response -> {
+            recordReviewCost(suggestionId, expert.getDisplayName(), reviewSessionId,
+                    "expert-review:" + expert.getDisplayName() + ":clarification-answer");
             handleExpertReviewResponse(suggestionId, response, expert, reviewSessionId);
         });
     }
@@ -696,6 +797,8 @@ public class ExpertReviewService {
     }
 
     private void runExpertBatch(Long suggestionId, int batchIndex) {
+        if (isBlockedBySpendingLimit(suggestionId)) return;
+
         Suggestion suggestion = suggestionRepository.findById(suggestionId).orElse(null);
         if (suggestion == null) return;
 
@@ -757,6 +860,8 @@ public class ExpertReviewService {
                     for (CompletableFuture<ExpertBatchResult> future : futures) {
                         try {
                             ExpertBatchResult result = future.join();
+                            recordReviewCost(suggestionId, result.expert.getDisplayName(),
+                                    result.sessionId, "expert-review:" + result.expert.getDisplayName());
                             handleExpertReviewResponse(suggestionId, result.response,
                                     result.expert, result.sessionId);
 
@@ -776,6 +881,8 @@ public class ExpertReviewService {
     }
 
     private void runSingleExpertReview(Long suggestionId, Suggestion suggestion, ExpertRole expert) {
+        if (isBlockedBySpendingLimit(suggestionId)) return;
+
         suggestion.setCurrentPhase(expert.getDisplayName() + " is reviewing the plan...");
         suggestionRepository.save(suggestion);
         broadcastUpdate(suggestion);
@@ -804,6 +911,8 @@ public class ExpertReviewService {
                 currentRound,
                 suggestion.getOwnerLockedSections()
         ).thenAccept(response -> {
+            recordReviewCost(suggestionId, expert.getDisplayName(), reviewSessionId,
+                    "expert-review:" + expert.getDisplayName());
             handleExpertReviewResponse(suggestionId, response, expert, reviewSessionId);
         });
     }
@@ -912,6 +1021,8 @@ public class ExpertReviewService {
             return;
         }
 
+        if (isBlockedBySpendingLimit(suggestionId)) return;
+
         ExpertRole expert = experts.get(0);
         java.util.List<ExpertRole> remaining = experts.subList(1, experts.size());
 
@@ -944,6 +1055,8 @@ public class ExpertReviewService {
                 round,
                 suggestion.getOwnerLockedSections()
         ).thenAccept(response -> {
+            recordReviewCost(suggestionId, expert.getDisplayName(), reviewSessionId,
+                    "expert-review:" + expert.getDisplayName());
             handleExpertReviewResponse(suggestionId, response, expert, reviewSessionId);
 
             Suggestion refreshed = suggestionRepository.findById(suggestionId).orElse(null);
@@ -961,6 +1074,8 @@ public class ExpertReviewService {
 
     private void reInvokeExpertForDetailedReview(Long suggestionId, ExpertRole expert,
                                                    String originalSessionId) {
+        if (isBlockedBySpendingLimit(suggestionId)) return;
+
         Suggestion suggestion = suggestionRepository.findById(suggestionId).orElse(null);
         if (suggestion == null) return;
 
@@ -1010,6 +1125,8 @@ public class ExpertReviewService {
                 currentRound,
                 suggestion.getOwnerLockedSections()
         ).thenAccept(response -> {
+            recordReviewCost(suggestionId, expert.getDisplayName(), retrySessionId,
+                    "expert-review:" + expert.getDisplayName());
             handleExpertReviewResponse(suggestionId, response, expert, retrySessionId);
         });
     }

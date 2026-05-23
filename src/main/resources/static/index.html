@@ -459,10 +459,17 @@
     <!-- Claude Queue View -->
     <div id="claudeQueueView" class="view" style="display:none">
         <span class="back-btn" onclick="app.navigate('list')">&larr; Back</span>
-        <h2>Claude CLI Queue</h2>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+            <h2 style="margin:0">Claude CLI Queue</h2>
+            <a href="#" onclick="app.navigate('claudeLogs');return false"
+               style="color:var(--primary);font-size:0.9rem;text-decoration:none">
+                View Claude Logs &rarr;
+            </a>
+        </div>
         <p style="color:var(--text-muted);font-size:0.9rem;margin-top:0.25rem">
             Live view of every Claude CLI request — waiting on the rate-limit gate, waiting on a
             concurrency slot, or actively running. Auto-refreshes every 2 seconds while open.
+            For completed requests with their full prompt and output, see the Claude Logs page.
         </p>
         <div id="claudeQueueSummary" class="card" style="margin-bottom:1rem;font-size:0.9rem"></div>
         <div id="claudeQueueError" style="display:none;color:var(--danger);margin-bottom:1rem"></div>

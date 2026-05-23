@@ -165,9 +165,14 @@ export async function loadDetail(id) {
     const canRetryExecution = isAdmin && suggestion.currentPhase && suggestion.currentPhase.includes('can retry');
     document.getElementById('retryExecutionActions').style.display = canRetryExecution ? '' : 'none';
 
-    // Resume from last successful task — keeps completed work, reruns the rest.
-    // Only meaningful while the plan is mid-execution.
-    const canResumeFromLast = isAdmin && ['IN_PROGRESS', 'TESTING'].includes(suggestion.status);
+    // Resume from last successful step — keeps completed work, reruns the rest.
+    // Shown while the plan is mid-execution OR when all tasks finished but the
+    // commit/push/PR pipeline failed (status DEV_COMPLETE + a "failed" phase).
+    const stuckOnPostTask = suggestion.status === 'DEV_COMPLETE'
+            && suggestion.currentPhase
+            && /fail/i.test(suggestion.currentPhase);
+    const canResumeFromLast = isAdmin
+            && (['IN_PROGRESS', 'TESTING'].includes(suggestion.status) || stuckOnPostTask);
     const resumeFromLastActions = document.getElementById('resumeFromLastActions');
     if (resumeFromLastActions) resumeFromLastActions.style.display = canResumeFromLast ? '' : 'none';
 

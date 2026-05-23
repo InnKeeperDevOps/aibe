@@ -797,12 +797,21 @@ public class SuggestionService {
     }
 
     /**
-     * Resume an in-progress suggestion from the last successful task: every
-     * COMPLETED task is left alone (so its committed work stays in the
-     * branch), and every non-COMPLETED task (FAILED, IN_PROGRESS, REVIEWING,
-     * PENDING) is reset to a fresh PENDING state. The existing working
-     * directory and suggestion branch are preserved — this is a "continue
-     * from where it broke" retry, not a fresh re-clone like Restart Plan.
+     * Resume an in-progress suggestion from the last successful step. Two cases:
+     * <ul>
+     *   <li>Some tasks are still unfinished (IN_PROGRESS / TESTING): every
+     *       COMPLETED task is left alone so its committed work stays on the
+     *       branch, and every non-COMPLETED task is reset to a fresh PENDING.
+     *       Execution picks up from the first non-completed task.</li>
+     *   <li>All tasks are COMPLETED but the post-task pipeline (commit / push
+     *       / PR creation) failed (status DEV_COMPLETE with a "failed" phase):
+     *       the "last successful step" was the last task itself, so the
+     *       commit-push-PR pipeline is re-run via {@link
+     *       PlanExecutionService#createPrAsync(Long)}.</li>
+     * </ul>
+     * In both cases the working directory and suggestion branch are preserved
+     * — this is a "continue from where it broke" retry, not a fresh re-clone
+     * like Restart Plan.
      */
     public Suggestion retryFromLastSuccessful(Long suggestionId) {
         Suggestion suggestion = suggestionRepository.findById(suggestionId)
@@ -810,7 +819,8 @@ public class SuggestionService {
 
         SuggestionStatus status = suggestion.getStatus();
         boolean restartable = status == SuggestionStatus.IN_PROGRESS
-                || status == SuggestionStatus.TESTING;
+                || status == SuggestionStatus.TESTING
+                || status == SuggestionStatus.DEV_COMPLETE;
         if (!restartable) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "This suggestion isn't being implemented right now — nothing to retry from");
@@ -820,11 +830,32 @@ public class SuggestionService {
         List<PlanTask> unfinished = all.stream()
                 .filter(t -> t.getStatus() != TaskStatus.COMPLETED)
                 .toList();
+
+        // Case 2: every task is done, but a post-task step (commit/push/PR)
+        // failed. The "last successful step" is the last completed task —
+        // re-run the submission pipeline from there.
         if (unfinished.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "All tasks are already completed — nothing to retry");
+            String phase = suggestion.getCurrentPhase();
+            boolean postTaskFailed = status == SuggestionStatus.DEV_COMPLETE
+                    && phase != null && phase.toLowerCase().contains("fail");
+            if (!postTaskFailed) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "All tasks are already completed — nothing to retry");
+            }
+            log.info("[AI-FLOW] suggestion={} all tasks done but post-task pipeline failed ({}); "
+                    + "re-running commit → push → PR", suggestionId, phase);
+            suggestion.setFailureReason(null);
+            suggestion.setCurrentPhase("Re-submitting the changes...");
+            suggestionRepository.save(suggestion);
+            messagingHelper.broadcastUpdate(suggestion);
+            messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                    "Re-running the submission step from the last completed task "
+                            + "(staging, committing, pushing, and opening the review request).");
+            planExecutionService.createPrAsync(suggestionId);
+            return suggestion;
         }
 
+        // Case 1: some tasks haven't completed — restart them.
         long completedCount = all.size() - unfinished.size();
         log.info("[AI-FLOW] suggestion={} resuming from last successful task ({} of {} tasks already completed)",
                 suggestionId, completedCount, all.size());

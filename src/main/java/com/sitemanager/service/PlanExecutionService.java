@@ -1,5 +1,6 @@
 package com.sitemanager.service;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -34,9 +35,16 @@ public class PlanExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(PlanExecutionService.class);
 
+    // LLM-emitted JSON is often JSON5-ish (unquoted field names, single quotes,
+    // trailing commas, // comments). Be lenient so reviewer/progress parsing doesn't
+    // explode on harmless deviations from strict JSON.
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+            .configure(JsonParser.Feature.ALLOW_UNQUOTED_FIELD_NAMES, true)
+            .configure(JsonParser.Feature.ALLOW_SINGLE_QUOTES, true)
+            .configure(JsonParser.Feature.ALLOW_COMMENTS, true)
+            .configure(JsonParser.Feature.ALLOW_TRAILING_COMMA, true);
 
     private final SuggestionRepository suggestionRepository;
     private final PlanTaskRepository planTaskRepository;

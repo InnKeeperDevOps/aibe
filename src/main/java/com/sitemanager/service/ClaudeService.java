@@ -176,9 +176,29 @@ public class ClaudeService {
             log.info("Claude CLI subprocesses will run as user '{}' (current user is root)", claudeRunAsUser);
         }
         resolveClaudeCliPath();
+        prepareClaudeCliHomeDir();
         materializeStoredClaudeCredentials();
         materializeStoredClaudeConfig();
         sweepOrphanedTrashOnStartup();
+    }
+
+    /**
+     * Ensure {@code <claude-home>/.claude/} exists AND is owned by the run-as
+     * user. The Java process runs as root and {@code Files.createDirectories}
+     * leaves the new dir owned by root with default permissions, so the
+     * runuser-wrapped CLI subprocess can't create sub-directories beneath it
+     * (e.g. {@code session-env/}) — every CLI call would then die with
+     * {@code EACCES: permission denied, mkdir '/home/claude/.claude/session-env'}
+     * and take its bash tool down with it.
+     */
+    private void prepareClaudeCliHomeDir() {
+        try {
+            Path claudeDir = Path.of(getClaudeCliHome(), ".claude");
+            Files.createDirectories(claudeDir);
+            chownToRunAsUser(claudeDir);
+        } catch (Exception e) {
+            log.warn("Could not prepare {}/.claude ownership: {}", getClaudeCliHome(), e.getMessage());
+        }
     }
 
     /**
@@ -202,6 +222,10 @@ public class ClaudeService {
             String credsJson = settings.getClaudeCredentials();
             Path credsFile = Path.of(getClaudeCliHome(), ".claude", ".credentials.json");
             Files.createDirectories(credsFile.getParent());
+            // Ensure ~/.claude/ itself is owned by the run-as user — Files.createDirectories
+            // creates it owned by root (the JVM user), and the CLI subprocess later needs
+            // to mkdir session-env/ and friends inside it.
+            chownToRunAsUser(credsFile.getParent());
             // Don't clobber a disk credentials file that is newer than the stored
             // copy: the CLI refreshes/rotates OAuth tokens on disk, and overwriting
             // them with a stale DB copy (whose refresh token may already be spent)

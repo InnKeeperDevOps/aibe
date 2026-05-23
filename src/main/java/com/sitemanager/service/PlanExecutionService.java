@@ -1180,10 +1180,60 @@ public class PlanExecutionService {
     }
 
     private String extractJsonBlock(String response) {
-        int start = response.indexOf('{');
-        int end = response.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-            return response.substring(start, end + 1);
+        if (response == null) return null;
+        String best = null;
+        int searchFrom = 0;
+        while (searchFrom < response.length()) {
+            int open = response.indexOf('{', searchFrom);
+            if (open < 0) break;
+            String candidate = findBalancedJsonObject(response, open);
+            if (candidate != null) {
+                if (best == null || candidate.length() > best.length()) {
+                    best = candidate;
+                }
+                searchFrom = open + candidate.length();
+            } else {
+                searchFrom = open + 1;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Starting at the given index (which must point at '{'), scan forward and
+     * return the substring covering a brace-balanced JSON object, accounting
+     * for string literals and escape sequences. Returns null if no balanced
+     * closing brace is found.
+     */
+    private String findBalancedJsonObject(String s, int start) {
+        if (start < 0 || start >= s.length() || s.charAt(start) != '{') return null;
+        int depth = 0;
+        boolean inString = false;
+        boolean escape = false;
+        for (int i = start; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (inString) {
+                if (c == '\\') {
+                    escape = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return s.substring(start, i + 1);
+                }
+            }
         }
         return null;
     }

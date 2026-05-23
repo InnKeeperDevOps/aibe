@@ -2738,18 +2738,44 @@ public class ClaudeService {
                 "     git pull --ff-only origin \"$default_branch\"\n" +
                 "5. Merge the suggestion branch with a real merge commit:\n" +
                 "     git merge --no-ff origin/%s -m \"Merge pull request #%d from %s\"\n" +
-                "6. Push:\n" +
+                "6. CONFLICT RESOLUTION (only if git merge reports conflicts):\n" +
+                "   Resolve every conflict by KEEPING THE FUNCTIONALITY OF BOTH SIDES — the\n" +
+                "   default branch's changes AND the suggestion branch's changes must both\n" +
+                "   continue to work after the resolution. Do not just pick one side.\n" +
+                "   For each conflicted file:\n" +
+                "     a. Read the conflicted hunks (markers <<<<<<<, =======, >>>>>>>) plus\n" +
+                "        enough surrounding context to understand the intent on each side.\n" +
+                "     b. Look at the commit history of both sides for that file\n" +
+                "        (git log -p HEAD..origin/%s -- <file> and\n" +
+                "         git log -p origin/<default_branch>..HEAD -- <file>) so you know\n" +
+                "        what each branch was trying to accomplish.\n" +
+                "     c. Edit the file to merge BOTH behaviours — combine the new code, keep\n" +
+                "        all added fields/methods/branches, reconcile renamed identifiers,\n" +
+                "        merge import lists, and unify any config so neither side's feature\n" +
+                "        is silently dropped. Remove every conflict marker.\n" +
+                "     d. git add <file>\n" +
+                "   After every conflict is resolved:\n" +
+                "     a. Run the project's test command (e.g. ./gradlew test, npm test) if\n" +
+                "        one is configured. If tests fail solely because of your conflict\n" +
+                "        resolution, fix the resolution and re-run.\n" +
+                "     b. git commit --no-edit  (uses the merge commit message git already\n" +
+                "        prepared at step 5)\n" +
+                "   Only fall back to {\"status\":\"CONFLICT\"} if the two sides are genuinely\n" +
+                "   semantically incompatible (e.g. they both changed the same business\n" +
+                "   logic in irreconcilable ways) and no honest merge of the behaviours\n" +
+                "   exists — never just because there are conflict markers.\n" +
+                "7. Push:\n" +
                 "     git push origin \"$default_branch\"\n\n" +
                 "Output ONE final JSON line summarising the outcome.\n" +
                 "On success:\n" +
-                "  {\"status\": \"MERGED\", \"message\": \"merged %s into <default_branch> and pushed\"}\n" +
-                "If there are merge conflicts you cannot safely resolve:\n" +
-                "  {\"status\": \"CONFLICT\", \"message\": \"which paths conflict and why\"}\n" +
+                "  {\"status\": \"MERGED\", \"message\": \"merged %s into <default_branch> and pushed (mention any conflicts you resolved and how)\"}\n" +
+                "Only if the two sides are genuinely impossible to reconcile after a real attempt:\n" +
+                "  {\"status\": \"CONFLICT\", \"message\": \"which paths conflict, what each side was doing, and why both behaviours cannot coexist\"}\n" +
                 "On any other failure (push rejected, branch missing, auth error, etc.):\n" +
                 "  {\"status\": \"FAILED\", \"message\": \"what went wrong\"}\n",
                 branchName, repoUrl, workingDir, prNumber, branchName,
                 sshKeyText, sshCommandText, branchName, branchName, prNumber, branchName,
-                branchName);
+                branchName, branchName);
 
         String sessionId = generateSessionId();
         try {

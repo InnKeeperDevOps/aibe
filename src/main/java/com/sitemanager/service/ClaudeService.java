@@ -2673,6 +2673,9 @@ public class ClaudeService {
      * <ul>
      *   <li>exit code 2 (CLI usage / argument error)</li>
      *   <li>{@code is_error} JSON flag combined with authentication, not-logged-in, or model-not-found messages</li>
+     *   <li>{@code is_error} JSON flag with {@code subtype":"error_max_turns"} — the CLI hit the
+     *       {@code --max-turns} cap, which is deterministic and will recur on every retry with the
+     *       same prompt and turn budget; retrying just wastes the rate-limit window</li>
      *   <li>successful exit (code 0) with null or empty output</li>
      * </ul>
      *
@@ -2698,6 +2701,13 @@ public class ClaudeService {
                     lower.contains("invalid api key") || lower.contains("model not found") ||
                     lower.contains("model_not_found") || lower.contains("invalid_api_key") ||
                     lower.contains("not logged in") || lower.contains("please run /login")) {
+                return ClaudeFailureType.PERMANENT;
+            }
+            // PERMANENT: the CLI hit the --max-turns cap. The prompt and turn budget
+            // are identical on retry, so it will hit the same cap every time —
+            // retrying just burns the rate-limit window and delays the surfaced
+            // failure. Classify it as PERMANENT so the caller fails fast.
+            if (lower.contains("error_max_turns") || lower.contains("\"subtype\":\"error_max_turns\"")) {
                 return ClaudeFailureType.PERMANENT;
             }
         }

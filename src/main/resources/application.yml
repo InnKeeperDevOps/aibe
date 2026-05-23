@@ -53,8 +53,9 @@ app:
   claude-model: ${CLAUDE_MODEL:}
   # Faster/cheaper model for expert reviews and feedback validation. Empty = uses claude-model.
   claude-model-expert: ${CLAUDE_MODEL_EXPERT:}
-  # Max turns for expert reviews (limits tool-use loops). Default 6.
-  claude-max-turns-expert: ${CLAUDE_MAX_TURNS_EXPERT:6}
+  # Max turns for expert reviews (limits tool-use loops). 0 = unlimited
+  # (omits the --max-turns flag entirely). Set a positive value to cap turns.
+  claude-max-turns-expert: ${CLAUDE_MAX_TURNS_EXPERT:0}
   # Max concurrent Claude CLI processes. Prevents resource exhaustion during batch expert reviews.
   claude-max-concurrent: ${CLAUDE_MAX_CONCURRENT:2}
   # Max Claude CLI calls per minute (sliding window). Prevents runaway loops from overwhelming the API.

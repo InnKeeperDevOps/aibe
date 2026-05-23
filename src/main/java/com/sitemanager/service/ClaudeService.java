@@ -1441,7 +1441,22 @@ public class ClaudeService {
                         return handleDeadSession(prompt, sessionId, workingDir,
                                 conversationContext, progressCallback, operationType, model, maxTurns);
                     }
-                    log.warn("{} error response: {}", logPrefix, truncate(errorMsg, MAX_LOG_RESPONSE_LENGTH));
+                    // "Not logged in · Please run /login" is an operator-actionable
+                    // configuration state, not a CLI failure: PlanExecutionService
+                    // detects the same message and parks the task as PENDING with a
+                    // "Waiting for Claude CLI login by an admin" detail. Logging it at
+                    // WARN with the generic "error response" template makes it
+                    // indistinguishable from real CLI failures and trips auto-fix
+                    // tooling into churning fix attempts on a config issue. Demote it
+                    // to INFO with a clearer message; the exception still propagates
+                    // so the downstream pause logic runs unchanged.
+                    if (isNotLoggedInError(errorMsg)) {
+                        log.info("{} Claude CLI is not logged in — pausing this call; "
+                                + "an admin can re-login from the Settings page to resume",
+                                logPrefix);
+                    } else {
+                        log.warn("{} error response: {}", logPrefix, truncate(errorMsg, MAX_LOG_RESPONSE_LENGTH));
+                    }
                     ClaudeFailureType failureType = classifyFailure(rawOutput, exitCode, null);
                     throw new ClaudeExecutionException(
                             "Claude CLI returned is_error: " + truncate(errorMsg, 200),
@@ -1512,6 +1527,19 @@ public class ClaudeService {
                 output.contains("No conversation found") ||
                 output.contains("session not found") ||
                 output.contains("Session not found"));
+    }
+
+    /**
+     * "Not logged in · Please run /login" is the CLI's response when the stored
+     * OAuth credentials are missing, expired, or have a revoked refresh token.
+     * It is an operator-actionable configuration state, not a CLI bug — callers
+     * (PlanExecutionService) detect it via the same substrings to pause work
+     * gracefully until an admin re-logs in.
+     */
+    boolean isNotLoggedInError(String output) {
+        if (output == null) return false;
+        String lower = output.toLowerCase();
+        return lower.contains("not logged in") || lower.contains("please run /login");
     }
 
     private String handleDeadSession(String prompt, String sessionId, String workingDir,

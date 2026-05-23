@@ -37,6 +37,7 @@ export function updateHeader() {
     const logoutBtn = document.getElementById('logoutBtn');
     const settingsBtn = document.getElementById('settingsBtn');
     const claudeLogsBtn = document.getElementById('claudeLogsBtn');
+    const claudeQueueBtn = document.getElementById('claudeQueueBtn');
 
     if (loggedIn) {
         badge.textContent = username + ' (' + role + ')';
@@ -46,12 +47,14 @@ export function updateHeader() {
         const isAdmin = (role === 'ROOT_ADMIN' || role === 'ADMIN');
         settingsBtn.style.display = isAdmin ? '' : 'none';
         if (claudeLogsBtn) claudeLogsBtn.style.display = isAdmin ? '' : 'none';
+        if (claudeQueueBtn) claudeQueueBtn.style.display = isAdmin ? '' : 'none';
     } else {
         badge.style.display = 'none';
         loginBtn.style.display = '';
         logoutBtn.style.display = 'none';
         settingsBtn.style.display = 'none';
         if (claudeLogsBtn) claudeLogsBtn.style.display = 'none';
+        if (claudeQueueBtn) claudeQueueBtn.style.display = 'none';
     }
     updateNewSuggestionBtn();
     updateAiRecommendationsBtn();

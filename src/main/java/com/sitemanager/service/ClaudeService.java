@@ -2321,10 +2321,18 @@ public class ClaudeService {
 
     /**
      * Push a branch to the remote origin.
+     *
+     * <p>Uses {@code --force} because the {@code suggestion-<id>} branch is
+     * automation-owned and deterministic per suggestion id: if a previous
+     * run already pushed this branch and we are retrying after a fresh
+     * (shallow, single-branch) clone, the local history will not be a
+     * fast-forward of the remote, and a plain push would be rejected with
+     * "failed to push some refs". The retry is intended to replace the
+     * remote branch with our newly-built version.
      */
     public void pushBranch(String repoDir, String branchName) throws Exception {
         ProcessBuilder pb = new ProcessBuilder(wrapCommandForUser(
-                java.util.List.of("git", "push", "-u", "origin", branchName)));
+                java.util.List.of("git", "push", "-u", "--force", "origin", branchName)));
         pb.directory(new File(repoDir));
         pb.redirectErrorStream(true);
         pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));

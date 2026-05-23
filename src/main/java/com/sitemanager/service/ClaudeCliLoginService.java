@@ -313,9 +313,17 @@ public class ClaudeCliLoginService {
     }
 
     private void saveCredentialsFromDisk() throws IOException {
+        // Newer Claude CLI versions add login state (oauthAccount, etc.) to
+        // ~/.claude.json on a successful login, separate from the token file.
+        // Capture it unconditionally so a pod restart restores the full logged-in
+        // state, even if .credentials.json itself ends up in a non-standard path.
+        captureClaudeJsonIfChanged();
+
         Path credsFile = waitForCredentialsFile();
         if (credsFile == null) {
-            throw new IOException("credentials file not found in any of: " + candidateCredentialPaths());
+            logDiagnosticListing();
+            throw new IOException("credentials file not found in any of: " + candidateCredentialPaths()
+                    + " (see WARN log lines above for what was actually written by the CLI)");
         }
         String json = Files.readString(credsFile, StandardCharsets.UTF_8);
         if (json.isBlank()) {
@@ -330,24 +338,102 @@ public class ClaudeCliLoginService {
     }
 
     /**
+     * Sync the current ~/.claude.json back to site_settings.claudeConfig if it
+     * has changed since the last materialize. Newer CLI versions store login
+     * state (e.g. {@code oauthAccount}) in this file independently of
+     * {@code .credentials.json}, so a successful login can mutate it.
+     */
+    private void captureClaudeJsonIfChanged() {
+        Path configFile = Path.of(claudeService.getClaudeCliHome(), ".claude.json");
+        try {
+            if (!Files.exists(configFile)) {
+                return;
+            }
+            String json = Files.readString(configFile, StandardCharsets.UTF_8);
+            if (json.isBlank()) {
+                return;
+            }
+            SiteSettings settings = settingsRepository.findAll().stream()
+                    .findFirst()
+                    .orElseGet(() -> settingsRepository.save(new SiteSettings()));
+            if (json.equals(settings.getClaudeConfig())) {
+                return;
+            }
+            settings.setClaudeConfig(json);
+            settingsRepository.save(settings);
+            log.info("Captured updated ~/.claude.json after login ({} bytes)", json.length());
+        } catch (Exception e) {
+            log.warn("Failed to capture ~/.claude.json after login: {}", e.getMessage());
+        }
+    }
+
+    /**
      * Locations the Claude CLI may have written {@code .credentials.json} to.
      * The runuser-wrapped login subprocess can resolve HOME differently from
-     * {@link ClaudeService#getClaudeCliHome()}, so credentials may land in a
-     * sibling home directory — check the likely candidates rather than one path.
+     * {@link ClaudeService#getClaudeCliHome()}, and modern CLI versions may
+     * use XDG-style paths under {@code ~/.config/claude/} or
+     * {@code ~/.local/share/claude/} instead of the historical
+     * {@code ~/.claude/} directory.
      */
     private List<Path> candidateCredentialPaths() {
         java.util.LinkedHashSet<Path> paths = new java.util.LinkedHashSet<>();
-        paths.add(Path.of(claudeService.getClaudeCliHome(), ".claude", ".credentials.json"));
-        String runAsUser = claudeService.getClaudeRunAsUser();
-        if (runAsUser != null && !runAsUser.isBlank()) {
-            paths.add(Path.of("/home", runAsUser, ".claude", ".credentials.json"));
+        for (String home : candidateHomes()) {
+            paths.add(Path.of(home, ".claude", ".credentials.json"));
+            paths.add(Path.of(home, ".config", "claude", ".credentials.json"));
+            paths.add(Path.of(home, ".local", "share", "claude", ".credentials.json"));
         }
-        paths.add(Path.of("/root", ".claude", ".credentials.json"));
-        String jvmHome = System.getProperty("user.home");
-        if (jvmHome != null && !jvmHome.isBlank()) {
-            paths.add(Path.of(jvmHome, ".claude", ".credentials.json"));
+        String xdgConfig = System.getenv("XDG_CONFIG_HOME");
+        if (xdgConfig != null && !xdgConfig.isBlank()) {
+            paths.add(Path.of(xdgConfig, "claude", ".credentials.json"));
         }
         return new ArrayList<>(paths);
+    }
+
+    /** Every home directory the CLI subprocess might have used for HOME. */
+    private List<String> candidateHomes() {
+        java.util.LinkedHashSet<String> homes = new java.util.LinkedHashSet<>();
+        String cliHome = claudeService.getClaudeCliHome();
+        if (cliHome != null && !cliHome.isBlank()) homes.add(cliHome);
+        String runAsUser = claudeService.getClaudeRunAsUser();
+        if (runAsUser != null && !runAsUser.isBlank()) homes.add("/home/" + runAsUser);
+        homes.add("/root");
+        String jvmHome = System.getProperty("user.home");
+        if (jvmHome != null && !jvmHome.isBlank()) homes.add(jvmHome);
+        return new ArrayList<>(homes);
+    }
+
+    /**
+     * On not-found, list the contents of every directory the CLI plausibly
+     * might have written into. Surfaces enough information to identify a
+     * non-standard storage location from logs alone — no need to exec into
+     * the pod.
+     */
+    private void logDiagnosticListing() {
+        log.warn("Login finished with rc=0 but no credentials file appeared in the expected locations. "
+                + "Diagnostic listings follow so the actual storage path can be identified:");
+        for (String home : candidateHomes()) {
+            listDirectoryForDiagnostic(Path.of(home));
+            listDirectoryForDiagnostic(Path.of(home, ".claude"));
+            listDirectoryForDiagnostic(Path.of(home, ".config", "claude"));
+            listDirectoryForDiagnostic(Path.of(home, ".local", "share", "claude"));
+        }
+    }
+
+    private void listDirectoryForDiagnostic(Path dir) {
+        try {
+            if (!Files.isDirectory(dir)) {
+                return;
+            }
+            try (java.util.stream.Stream<Path> entries = Files.list(dir)) {
+                List<String> names = entries
+                        .map(p -> p.getFileName().toString())
+                        .sorted()
+                        .collect(java.util.stream.Collectors.toList());
+                log.warn("  {}: {}", dir, names);
+            }
+        } catch (Exception e) {
+            log.debug("  Could not list {}: {}", dir, e.getMessage());
+        }
     }
 
     /**

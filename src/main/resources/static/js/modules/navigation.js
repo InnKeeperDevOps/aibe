@@ -9,6 +9,8 @@ const _callbacks = {
     loadDetail: () => {},
     loadSettings: () => {},
     loadClaudeLogs: () => {},
+    loadClaudeQueue: () => {},
+    stopClaudeQueuePolling: () => {},
     disconnectWs: () => {},
     updateSaveAsDraftBtn: () => {},
 };
@@ -49,6 +51,8 @@ export function navigate(view, data) {
 
     // Disconnect existing WebSocket
     _callbacks.disconnectWs();
+    // Stop the Claude Queue poll when leaving its view
+    _callbacks.stopClaudeQueuePolling();
     state.currentView = view;
 
     switch (view) {
@@ -60,6 +64,7 @@ export function navigate(view, data) {
         case 'detail': _callbacks.loadDetail(data); break;
         case 'settings': _callbacks.loadSettings(); break;
         case 'claudeLogs': _callbacks.loadClaudeLogs(); break;
+        case 'claudeQueue': _callbacks.loadClaudeQueue(); break;
         case 'login': {
             const regDisabled = state.settings.registrationsEnabled === false;
             const createLink = document.getElementById('createAccountLink');

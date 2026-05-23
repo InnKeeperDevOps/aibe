@@ -222,6 +222,8 @@ public class PlanExecutionService {
         log.info("[AI-FLOW] suggestion={} starting execution", suggestion.getId());
         String repoUrl = settingsService.getSettings().getTargetRepoUrl();
         if (repoUrl == null || repoUrl.isBlank()) {
+            log.warn("[AI-FLOW] suggestion={} blocked — no target repository URL configured in Settings",
+                    suggestion.getId());
             messagingHelper.addMessage(suggestion.getId(), SenderType.SYSTEM, "System",
                     "Cannot start work yet — the project hasn't been set up. An admin needs to configure the project in Settings.");
             suggestion.setCurrentPhase("Blocked — project not configured");
@@ -252,32 +254,45 @@ public class PlanExecutionService {
         slackNotificationService.sendNotification(suggestion, "IN_PROGRESS");
         messagingHelper.broadcastExecutionQueueStatus();
 
-        new Thread(() -> {
-            try {
-                String workDir = claudeService.cloneRepository(repoUrl, suggestion.getId().toString());
+        log.info("[AI-FLOW] suggestion={} spawning worker thread (repo={})",
+                suggestion.getId(), repoUrl);
 
-                String branchName = "suggestion-" + suggestion.getId();
+        final Long suggestionId = suggestion.getId();
+        Thread worker = new Thread(() -> {
+            try {
+                log.info("[AI-FLOW] suggestion={} worker thread running, cloning repository...",
+                        suggestionId);
+                String workDir = claudeService.cloneRepository(repoUrl, suggestionId.toString());
+                log.info("[AI-FLOW] suggestion={} repository cloned to {}, creating branch",
+                        suggestionId, workDir);
+
+                String branchName = "suggestion-" + suggestionId;
                 claudeService.createBranch(workDir, branchName);
+                log.info("[AI-FLOW] suggestion={} branch {} ready, starting task execution",
+                        suggestionId, branchName);
 
                 suggestion.setWorkingDirectory(workDir);
                 suggestionRepository.save(suggestion);
 
-                messagingHelper.addMessage(suggestion.getId(), SenderType.SYSTEM, "System",
+                messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
                         "Workspace ready. Starting work on your suggestion one task at a time...");
 
-                executeNextTask(suggestion.getId());
+                executeNextTask(suggestionId);
 
             } catch (Exception e) {
-                log.error("Failed to execute suggestion {}: {}", suggestion.getId(), e.getMessage(), e);
+                log.error("[AI-FLOW] suggestion={} worker thread failed: {}",
+                        suggestionId, e.getMessage(), e);
                 suggestion.setFailureReason(trimTo1000(e.getMessage() != null ? e.getMessage() : "Unexpected error during setup"));
                 suggestion.setCurrentPhase("Failed — can retry");
                 suggestionRepository.save(suggestion);
                 messagingHelper.broadcastUpdate(suggestion);
-                messagingHelper.addMessage(suggestion.getId(), SenderType.SYSTEM, "System",
+                messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
                         "Something went wrong while working on this suggestion. It can be retried.");
                 tryStartNextQueuedSuggestion();
             }
-        }).start();
+        }, "suggestion-exec-" + suggestionId);
+        worker.setDaemon(true);
+        worker.start();
     }
 
     /**

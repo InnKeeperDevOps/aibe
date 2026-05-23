@@ -124,6 +124,11 @@ import {
 } from './modules/claudeLogs.js';
 
 import {
+    loadClaudeQueue,
+    stopClaudeQueuePolling,
+} from './modules/claudeQueue.js';
+
+import {
     loadSettings,
     loadGroups,
     editGroup,
@@ -233,6 +238,8 @@ registerNavigationCallbacks({
     loadDetail,
     loadSettings,
     loadClaudeLogs,
+    loadClaudeQueue,
+    stopClaudeQueuePolling,
     disconnectWs,
     updateSaveAsDraftBtn: () => {
         const btn = document.getElementById('saveAsDraftBtn');
@@ -357,6 +364,10 @@ window.app = {
     // claude logs
     loadClaudeLogs,
     viewClaudeLog,
+
+    // claude queue
+    loadClaudeQueue,
+    stopClaudeQueuePolling,
 
     // settings / admin
     loadSettings,

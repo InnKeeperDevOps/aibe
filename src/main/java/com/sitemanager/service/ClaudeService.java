@@ -45,6 +45,46 @@ public class ClaudeService {
     private final Map<String, String> sessionMap = new ConcurrentHashMap<>();
     private final AtomicLong requestCounter = new AtomicLong(0);
 
+    /**
+     * Every CLI call that has entered {@link #sendToClaude} but not yet finished —
+     * keyed by requestId. Powers the admin Claude Queue page: callers can see what
+     * is waiting on rate limit / concurrency / actively running.
+     */
+    private final ConcurrentMap<Long, QueueEntry> requestRegistry = new ConcurrentHashMap<>();
+
+    /** One in-flight CLI request, observable from the admin Claude Queue page. */
+    public static final class QueueEntry {
+        public static final String PHASE_AWAITING_RATE_LIMIT = "AWAITING_RATE_LIMIT";
+        public static final String PHASE_AWAITING_CONCURRENCY = "AWAITING_CONCURRENCY";
+        public static final String PHASE_RUNNING = "RUNNING";
+
+        final long requestId;
+        final String operationType;
+        final String model;
+        final String sessionId;
+        final String workingDir;
+        final long enqueuedAt;
+        volatile String phase;
+        volatile long phaseChangedAt;
+
+        QueueEntry(long requestId, String operationType, String model,
+                   String sessionId, String workingDir, String initialPhase) {
+            this.requestId = requestId;
+            this.operationType = operationType;
+            this.model = (model != null && !model.isBlank()) ? model : "default";
+            this.sessionId = sessionId;
+            this.workingDir = workingDir;
+            this.enqueuedAt = System.currentTimeMillis();
+            this.phaseChangedAt = this.enqueuedAt;
+            this.phase = initialPhase;
+        }
+
+        void setPhase(String newPhase) {
+            this.phase = newPhase;
+            this.phaseChangedAt = System.currentTimeMillis();
+        }
+    }
+
     // FIFO rate limiter: fair ReentrantLock guarantees threads acquire in arrival order
     private long[] callTimestamps;
     private int timestampHead = 0;
@@ -593,6 +633,66 @@ public class ClaudeService {
         }
     }
 
+    /**
+     * Snapshot of the Claude CLI request queue for the admin Claude Queue page:
+     * the configured rate/concurrency limits, the current rate-limit window
+     * usage, and every in-flight request keyed by phase.
+     */
+    public Map<String, Object> getClaudeQueueSnapshot() {
+        long now = System.currentTimeMillis();
+
+        List<Map<String, Object>> requests = new java.util.ArrayList<>();
+        for (QueueEntry e : requestRegistry.values()) {
+            Map<String, Object> r = new java.util.LinkedHashMap<>();
+            r.put("requestId", e.requestId);
+            r.put("operationType", e.operationType);
+            r.put("model", e.model);
+            r.put("sessionId", e.sessionId);
+            r.put("workingDir", e.workingDir);
+            r.put("phase", e.phase);
+            r.put("enqueuedAt", e.enqueuedAt);
+            r.put("phaseChangedAt", e.phaseChangedAt);
+            r.put("ageMs", now - e.enqueuedAt);
+            r.put("phaseAgeMs", now - e.phaseChangedAt);
+            requests.add(r);
+        }
+        // Newest first
+        requests.sort((a, b) -> Long.compare((long) b.get("enqueuedAt"), (long) a.get("enqueuedAt")));
+
+        long running = requests.stream().filter(r -> QueueEntry.PHASE_RUNNING.equals(r.get("phase"))).count();
+        long awaitingConcurrency = requests.stream()
+                .filter(r -> QueueEntry.PHASE_AWAITING_CONCURRENCY.equals(r.get("phase"))).count();
+        long awaitingRateLimit = requests.stream()
+                .filter(r -> QueueEntry.PHASE_AWAITING_RATE_LIMIT.equals(r.get("phase"))).count();
+
+        Map<String, Object> snap = new java.util.LinkedHashMap<>();
+        snap.put("now", now);
+        snap.put("maxConcurrent", claudeMaxConcurrent);
+        snap.put("maxCallsPerMinute", claudeMaxCallsPerMinute);
+        snap.put("availablePermits", claudeGate.availablePermits());
+        snap.put("rateLimitWindowUsed", currentRateLimitWindowUsage(now));
+        snap.put("running", running);
+        snap.put("awaitingConcurrency", awaitingConcurrency);
+        snap.put("awaitingRateLimit", awaitingRateLimit);
+        snap.put("requests", requests);
+        return snap;
+    }
+
+    /** Number of timestamps in the rate-limit circular buffer that fall within the last 60s. */
+    private int currentRateLimitWindowUsage(long now) {
+        rateLimitLock.lock();
+        try {
+            long cutoff = now - 60_000L;
+            int count = 0;
+            for (long ts : callTimestamps) {
+                if (ts > cutoff) count++;
+            }
+            return count;
+        } finally {
+            rateLimitLock.unlock();
+        }
+    }
+
     private SiteSettings getSettings() {
         return settingsRepository.findAll().stream().findFirst().orElse(new SiteSettings());
     }
@@ -656,7 +756,9 @@ public class ClaudeService {
     public String getRecommendations(String prompt) throws Exception {
         String sessionId = generateSessionId();
         String model = resolveModel();
-        return sendToClaudeGated(prompt, sessionId, getMainRepoDir(), null, null, "recommendations", model, 0);
+        // Route through sendToClaude so this respects the rate/concurrency gates
+        // and appears in the admin Claude Queue page like every other CLI call.
+        return sendToClaude(prompt, sessionId, getMainRepoDir(), null, null, "recommendations", model, 0);
     }
 
     /**
@@ -1119,24 +1221,35 @@ public class ClaudeService {
                                  String conversationContext,
                                  Consumer<String> progressCallback,
                                  String operationType, String model, int maxTurns) throws Exception {
-        // Rate limit gate
-        acquireRateLimit();
-
-        // Concurrency gate
-        claudeGate.acquire();
+        // Assign the requestId up front so the admin Claude Queue page can see
+        // this call while it waits on the rate-limit / concurrency gates, and
+        // so the [CLAUDE-REQ-N] log prefix is consistent from entry to exit.
+        long requestId = requestCounter.incrementAndGet();
+        QueueEntry entry = new QueueEntry(requestId, operationType, model, sessionId, workingDir,
+                QueueEntry.PHASE_AWAITING_RATE_LIMIT);
+        requestRegistry.put(requestId, entry);
         try {
-            return sendToClaudeGated(prompt, sessionId, workingDir, conversationContext,
-                    progressCallback, operationType, model, maxTurns);
+            acquireRateLimit();
+
+            entry.setPhase(QueueEntry.PHASE_AWAITING_CONCURRENCY);
+            claudeGate.acquire();
+            try {
+                entry.setPhase(QueueEntry.PHASE_RUNNING);
+                return sendToClaudeGated(prompt, sessionId, workingDir, conversationContext,
+                        progressCallback, operationType, model, maxTurns, requestId);
+            } finally {
+                claudeGate.release();
+            }
         } finally {
-            claudeGate.release();
+            requestRegistry.remove(requestId);
         }
     }
 
     private String sendToClaudeGated(String prompt, String sessionId, String workingDir,
                                  String conversationContext,
                                  Consumer<String> progressCallback,
-                                 String operationType, String model, int maxTurns) throws Exception {
-        long requestId = requestCounter.incrementAndGet();
+                                 String operationType, String model, int maxTurns,
+                                 long requestId) throws Exception {
         String logPrefix = String.format("[CLAUDE-REQ-%d][%s]", requestId, operationType);
 
         // Pull the freshest credentials from site_settings before executing.

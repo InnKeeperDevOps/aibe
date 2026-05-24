@@ -1989,9 +1989,16 @@ public class ClaudeService {
             File partial = new File(targetDir);
             if (partial.exists()) {
                 try {
-                    evictStaleWorkspaceDir(partial.toPath());
+                    // Remove the partial clone *synchronously* (rm -rf inline) — using
+                    // evictStaleWorkspaceDir() here would atomic-rename it to
+                    // .trash-<uuid>/ and schedule yet another background delete, whose
+                    // rm -rf I/O would then thrash the workspace volume in parallel with
+                    // the retry clone. That is the very disk-pressure condition that
+                    // caused git's index write to fail in the first place — recreating
+                    // it inside the retry makes the retry far more likely to fail too.
+                    removeDirInline(partial.toPath());
                 } catch (Exception cleanupErr) {
-                    log.warn("Could not evict partial clone {} before retry: {}",
+                    log.warn("Could not remove partial clone {} before retry: {}",
                             targetDir, cleanupErr.getMessage());
                 }
             }
@@ -2023,6 +2030,27 @@ public class ClaudeService {
                 Thread.currentThread().interrupt();
                 return;
             }
+        }
+    }
+
+    /**
+     * Synchronous {@code rm -rf} used by the {@link #gitClone} retry path so the
+     * disk is fully quiet before the retry clone starts. Unlike
+     * {@link #scheduleBackgroundDelete}, this blocks the caller until the tree
+     * is gone — exactly the contract the retry needs.
+     */
+    private void removeDirInline(Path path) throws Exception {
+        long start = System.currentTimeMillis();
+        ProcessBuilder pb = new ProcessBuilder("rm", "-rf", path.toString());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        consumeStream(p.getInputStream());
+        int rc = p.waitFor();
+        long elapsed = System.currentTimeMillis() - start;
+        if (rc == 0) {
+            log.info("Inline removal of {} completed in {}ms", path, elapsed);
+        } else {
+            log.warn("Inline removal of {} failed (rc={}, elapsed={}ms)", path, rc, elapsed);
         }
     }
 
@@ -2090,7 +2118,20 @@ public class ClaudeService {
             String line;
             while ((line = reader.readLine()) != null) {
                 output.append(line).append("\n");
-                log.info("Git clone: {}", line);
+                // git's "fatal: unable to write new index file" is a known transient
+                // failure on this workspace (sibling .trash-<uuid>/ cleanups starving
+                // disk during the index write) — gitClone() catches it and retries.
+                // Logging it per-line at INFO surfaces a phantom service error to
+                // log-scraping tooling even when the retry succeeds and the overall
+                // operation completes fine. Downgrade just that line so the INFO
+                // stream reflects actual outcomes; the full output is still captured
+                // in `output` and propagated in the exception when the retry also
+                // fails.
+                if (line.contains("fatal: unable to write new index file")) {
+                    log.debug("Git clone (transient, will retry): {}", line);
+                } else {
+                    log.info("Git clone: {}", line);
+                }
             }
         }
 

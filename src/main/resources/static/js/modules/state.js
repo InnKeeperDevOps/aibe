@@ -11,6 +11,7 @@ export const state = {
     notificationWs: null,
     notificationWsReconnectTimeout: null,
     recommendations: [],
+    pendingRecommendationResultId: null,
     clarification: {
         questions: [],
         answers: [],

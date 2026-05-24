@@ -411,6 +411,511 @@ describe('prefillFromRecommendation()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// recommendations — renderRecommendationsHistoryList() (with Re-run button)
+// ---------------------------------------------------------------------------
+
+function formatHistoryStatusForTest(status) {
+    switch (status) {
+        case 'DONE': return 'Finished';
+        case 'ERROR': return 'Failed';
+        case 'IN_PROGRESS': return 'In progress';
+        case 'PENDING': return 'Waiting to start';
+        default: return status ? esc(status) : 'Unknown';
+    }
+}
+
+function formatHistoryTimestampForTest(iso) {
+    if (!iso) return '';
+    try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
+    } catch (e) {
+        return iso;
+    }
+}
+
+function renderRecommendationsHistoryList(runs) {
+    const content = document.getElementById('recommendationsHistoryContent');
+    if (!runs.length) {
+        content.innerHTML = '<div class="card" style="text-align:center;color:var(--text-muted)">No past recommendation runs yet.</div>';
+        return;
+    }
+    content.innerHTML = runs.map(run => {
+        const statusLabel = formatHistoryStatusForTest(run.status);
+        const startedLabel = formatHistoryTimestampForTest(run.createdAt);
+        const finishedLabel = run.completedAt ? formatHistoryTimestampForTest(run.completedAt) : 'Not finished';
+        const byLabel = run.requestedByUsername ? esc(run.requestedByUsername) : '(unknown)';
+        const countLabel = (typeof run.resultCount === 'number') ? run.resultCount : 0;
+        const taskIdSafe = esc(run.taskId);
+        return `
+            <div class="card" style="margin-bottom:0.75rem">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem">
+                    <div>
+                        <div style="font-weight:600">Run by ${byLabel}</div>
+                        <div style="font-size:0.85rem;color:var(--text-muted)">Status: ${statusLabel}</div>
+                        <div style="font-size:0.85rem;color:var(--text-muted)">Started: ${esc(startedLabel)}</div>
+                        <div style="font-size:0.85rem;color:var(--text-muted)">Finished: ${esc(finishedLabel)}</div>
+                        <div style="font-size:0.85rem;color:var(--text-muted)">Recommendations: ${countLabel}</div>
+                    </div>
+                    <div style="display:flex;gap:0.25rem;flex-wrap:wrap;justify-content:flex-end">
+                        <button class="btn btn-outline btn-sm" onclick="app.viewRecommendationRun('${taskIdSafe}')">View</button>
+                        <button class="btn btn-primary btn-sm" onclick="app.rerunRecommendationRun('${taskIdSafe}')">Re-run</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+describe('renderRecommendationsHistoryList() with Re-run button', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="recommendationsHistoryContent"></div>';
+    });
+
+    test('empty list still renders the placeholder message', () => {
+        renderRecommendationsHistoryList([]);
+        expect(document.getElementById('recommendationsHistoryContent').innerHTML)
+            .toContain('No past recommendation runs yet');
+    });
+
+    test('every entry has a View button AND a Re-run button', () => {
+        const runs = [
+            { taskId: 't-1', status: 'DONE', createdAt: '2026-05-01T00:00:00Z', completedAt: '2026-05-01T00:05:00Z', requestedByUsername: 'alice', resultCount: 5 },
+            { taskId: 't-2', status: 'ERROR', createdAt: '2026-05-02T00:00:00Z', completedAt: '2026-05-02T00:01:00Z', requestedByUsername: 'bob', resultCount: 0 },
+        ];
+        renderRecommendationsHistoryList(runs);
+        const html = document.getElementById('recommendationsHistoryContent').innerHTML;
+        expect((html.match(/viewRecommendationRun/g) || []).length).toBe(2);
+        expect((html.match(/rerunRecommendationRun/g) || []).length).toBe(2);
+        expect(html).toContain("rerunRecommendationRun('t-1')");
+        expect(html).toContain("rerunRecommendationRun('t-2')");
+    });
+
+    test('Re-run button is rendered even for failed runs', () => {
+        renderRecommendationsHistoryList([
+            { taskId: 'failed-1', status: 'ERROR', createdAt: '2026-05-01T00:00:00Z', requestedByUsername: 'admin', resultCount: 0 },
+        ]);
+        const html = document.getElementById('recommendationsHistoryContent').innerHTML;
+        expect(html).toContain("rerunRecommendationRun('failed-1')");
+    });
+
+    test('Re-run button is rendered for in-progress runs too', () => {
+        renderRecommendationsHistoryList([
+            { taskId: 'p-1', status: 'IN_PROGRESS', createdAt: '2026-05-01T00:00:00Z', requestedByUsername: 'admin', resultCount: 0 },
+        ]);
+        const html = document.getElementById('recommendationsHistoryContent').innerHTML;
+        expect(html).toContain('Re-run');
+        expect(html).toContain("rerunRecommendationRun('p-1')");
+    });
+
+    test('Re-run button label is "Re-run"', () => {
+        renderRecommendationsHistoryList([
+            { taskId: 't-1', status: 'DONE', createdAt: '2026-05-01T00:00:00Z', requestedByUsername: 'admin', resultCount: 1 },
+        ]);
+        const html = document.getElementById('recommendationsHistoryContent').innerHTML;
+        expect(html).toContain('>Re-run<');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// recommendations — rerunRecommendationRun()
+// ---------------------------------------------------------------------------
+
+function makeRerunRecommendationRun(fetchFn, refreshFn, toastFn) {
+    return async function rerunRecommendationRun(taskId) {
+        if (!taskId) return;
+        try {
+            const res = await fetchFn('/api/recommendations/runs/' + encodeURIComponent(taskId) + '/rerun', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (res.status === 404) {
+                toastFn('That past recommendation could not be found.');
+                return;
+            }
+            if (res.status === 403) {
+                toastFn('You need admin access to start a new recommendation run.');
+                return;
+            }
+            if (!res.ok) {
+                toastFn('Could not start a new recommendation run. Please try again.');
+                return;
+            }
+            toastFn('A new recommendation run has started.');
+            await refreshFn();
+        } catch (e) {
+            toastFn('Could not connect. Please try again.');
+        }
+    };
+}
+
+describe('rerunRecommendationRun()', () => {
+    let fetchCalls;
+    let refreshCalls;
+    let toastMessages;
+
+    function setup({ status = 202, ok = true, throws = false } = {}) {
+        fetchCalls = [];
+        refreshCalls = 0;
+        toastMessages = [];
+        const fetchFn = (url, opts) => {
+            fetchCalls.push({ url, opts });
+            if (throws) return Promise.reject(new Error('network down'));
+            return Promise.resolve({
+                status,
+                ok,
+                json: async () => ({ taskId: 'new-task' }),
+            });
+        };
+        const refreshFn = async () => { refreshCalls++; };
+        const toastFn = (msg) => { toastMessages.push(msg); };
+        return makeRerunRecommendationRun(fetchFn, refreshFn, toastFn);
+    }
+
+    test('does nothing when taskId is empty', async () => {
+        const rerun = setup();
+        await rerun('');
+        expect(fetchCalls).toHaveLength(0);
+        expect(refreshCalls).toBe(0);
+        expect(toastMessages).toHaveLength(0);
+    });
+
+    test('does nothing when taskId is null/undefined', async () => {
+        const rerun = setup();
+        await rerun(null);
+        await rerun(undefined);
+        expect(fetchCalls).toHaveLength(0);
+    });
+
+    test('posts to the rerun endpoint for the given taskId', async () => {
+        const rerun = setup({ status: 202, ok: true });
+        await rerun('abc-123');
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0].url).toBe('/api/recommendations/runs/abc-123/rerun');
+        expect(fetchCalls[0].opts.method).toBe('POST');
+    });
+
+    test('URL-encodes special characters in the taskId', async () => {
+        const rerun = setup({ status: 202, ok: true });
+        await rerun('weird id/with stuff');
+        expect(fetchCalls[0].url).toBe('/api/recommendations/runs/weird%20id%2Fwith%20stuff/rerun');
+    });
+
+    test('on success, shows toast and refreshes the list', async () => {
+        const rerun = setup({ status: 202, ok: true });
+        await rerun('t-1');
+        expect(toastMessages).toEqual(['A new recommendation run has started.']);
+        expect(refreshCalls).toBe(1);
+    });
+
+    test('on 404, shows "not found" toast and does NOT refresh', async () => {
+        const rerun = setup({ status: 404, ok: false });
+        await rerun('t-missing');
+        expect(toastMessages[0]).toContain('could not be found');
+        expect(refreshCalls).toBe(0);
+    });
+
+    test('on 403, shows "admin access" toast and does NOT refresh', async () => {
+        const rerun = setup({ status: 403, ok: false });
+        await rerun('t-1');
+        expect(toastMessages[0]).toContain('admin access');
+        expect(refreshCalls).toBe(0);
+    });
+
+    test('on other failure status, shows generic toast', async () => {
+        const rerun = setup({ status: 500, ok: false });
+        await rerun('t-1');
+        expect(toastMessages[0]).toContain('Could not start a new recommendation run');
+        expect(refreshCalls).toBe(0);
+    });
+
+    test('on network failure, shows connection toast', async () => {
+        const rerun = setup({ throws: true });
+        await rerun('t-1');
+        expect(toastMessages[0]).toContain('Could not connect');
+        expect(refreshCalls).toBe(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// recommendations — renderActiveRecommendations() (acted-on removal)
+// ---------------------------------------------------------------------------
+
+function renderActiveRecommendations(data) {
+    const content = document.getElementById('recommendationsContent');
+    if (!content) return;
+    if (!data || !data.length) {
+        content.innerHTML = '<div class="card" style="color:var(--text-muted);text-align:center">No outstanding recommendations — everything has been turned into suggestions.</div>';
+        return;
+    }
+    content.innerHTML = data.map((rec, i) => {
+        const resultId = (rec && rec.id != null) ? rec.id : '';
+        return `
+            <div class="card recommendation-card" data-result-id="${resultId}" style="margin-bottom:0.75rem">
+                <div style="font-weight:600;margin-bottom:0.25rem">${esc(rec.title)}</div>
+                <div style="font-size:0.9rem;color:var(--text-muted);margin-bottom:0.75rem">${esc(rec.description)}</div>
+                <button class="btn btn-outline btn-sm" onclick="app.prefillFromRecommendation(${i})">Create Suggestion</button>
+            </div>
+        `;
+    }).join('');
+}
+
+describe('renderActiveRecommendations()', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="recommendationsContent"></div>';
+    });
+
+    test('renders one card per recommendation', () => {
+        renderActiveRecommendations([
+            { id: 11, title: 'A', description: 'desc A' },
+            { id: 12, title: 'B', description: 'desc B' },
+        ]);
+        const html = document.getElementById('recommendationsContent').innerHTML;
+        expect((html.match(/recommendation-card/g) || []).length).toBe(2);
+    });
+
+    test('embeds the result id as a data attribute so cards can be removed individually', () => {
+        renderActiveRecommendations([
+            { id: 11, title: 'A', description: 'desc A' },
+            { id: 12, title: 'B', description: 'desc B' },
+        ]);
+        const html = document.getElementById('recommendationsContent').innerHTML;
+        expect(html).toContain('data-result-id="11"');
+        expect(html).toContain('data-result-id="12"');
+    });
+
+    test('shows an empty-state message when nothing is left to act on', () => {
+        renderActiveRecommendations([]);
+        const html = document.getElementById('recommendationsContent').innerHTML;
+        expect(html).toContain('No outstanding recommendations');
+    });
+
+    test('treats null data as empty', () => {
+        renderActiveRecommendations(null);
+        const html = document.getElementById('recommendationsContent').innerHTML;
+        expect(html).toContain('No outstanding recommendations');
+    });
+
+    test('escapes HTML in the title and description', () => {
+        renderActiveRecommendations([
+            { id: 1, title: '<script>x</script>', description: '<img onerror=1>' },
+        ]);
+        const html = document.getElementById('recommendationsContent').innerHTML;
+        expect(html).not.toContain('<script>x</script>');
+        expect(html).toContain('&lt;script&gt;');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// recommendations — prefillFromRecommendation() now remembers the result id
+// ---------------------------------------------------------------------------
+
+function makePrefillFromRecommendationWithId(state, closeModalFn, navigateFn) {
+    return function prefillFromRecommendation(index) {
+        const rec = state.recommendations && state.recommendations[index];
+        if (!rec) return;
+        state.pendingRecommendationResultId = (rec.id != null) ? rec.id : null;
+        closeModalFn();
+        navigateFn('create');
+        document.getElementById('createTitle').value = rec.title;
+        document.getElementById('createDescription').value = rec.description;
+    };
+}
+
+describe('prefillFromRecommendation() — remembers the recommendation id', () => {
+    let state;
+    beforeEach(() => {
+        state = {
+            recommendations: [{ id: 42, title: 'T', description: 'D' }],
+            pendingRecommendationResultId: null,
+        };
+        document.body.innerHTML = `
+            <div id="recommendationsModal"></div>
+            <input id="createTitle" />
+            <textarea id="createDescription"></textarea>
+        `;
+    });
+
+    test('stores the recommendation result id so it can be marked acted-on later', () => {
+        const prefill = makePrefillFromRecommendationWithId(state, () => {}, () => {});
+        prefill(0);
+        expect(state.pendingRecommendationResultId).toBe(42);
+    });
+
+    test('stores null when the recommendation has no id', () => {
+        state.recommendations = [{ title: 'T', description: 'D' }];
+        const prefill = makePrefillFromRecommendationWithId(state, () => {}, () => {});
+        prefill(0);
+        expect(state.pendingRecommendationResultId).toBeNull();
+    });
+
+    test('does not touch pending id when called with an out-of-range index', () => {
+        state.pendingRecommendationResultId = 99;
+        const prefill = makePrefillFromRecommendationWithId(state, () => {}, () => {});
+        prefill(7);
+        expect(state.pendingRecommendationResultId).toBe(99);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// recommendations — markRecommendationActedOn()
+// ---------------------------------------------------------------------------
+
+function makeMarkRecommendationActedOn(state, fetchFn) {
+    return async function markRecommendationActedOn(suggestionId) {
+        const resultId = state.pendingRecommendationResultId;
+        state.pendingRecommendationResultId = null;
+        if (resultId == null || suggestionId == null) return;
+        try {
+            await fetchFn('/api/recommendations/results/' + encodeURIComponent(resultId) + '/act-on', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ suggestionId })
+            });
+        } catch (e) {
+            // best effort
+        }
+    };
+}
+
+describe('markRecommendationActedOn()', () => {
+    let state;
+    let fetchCalls;
+
+    function setupFetch({ throws = false } = {}) {
+        fetchCalls = [];
+        return (url, opts) => {
+            fetchCalls.push({ url, opts });
+            if (throws) return Promise.reject(new Error('network down'));
+            return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+        };
+    }
+
+    beforeEach(() => {
+        state = { pendingRecommendationResultId: null };
+    });
+
+    test('does nothing when no recommendation id is pending', async () => {
+        const fetchFn = setupFetch();
+        const mark = makeMarkRecommendationActedOn(state, fetchFn);
+        await mark(123);
+        expect(fetchCalls).toHaveLength(0);
+    });
+
+    test('does nothing when suggestionId is null', async () => {
+        state.pendingRecommendationResultId = 7;
+        const fetchFn = setupFetch();
+        const mark = makeMarkRecommendationActedOn(state, fetchFn);
+        await mark(null);
+        expect(fetchCalls).toHaveLength(0);
+    });
+
+    test('does nothing when suggestionId is undefined', async () => {
+        state.pendingRecommendationResultId = 7;
+        const fetchFn = setupFetch();
+        const mark = makeMarkRecommendationActedOn(state, fetchFn);
+        await mark(undefined);
+        expect(fetchCalls).toHaveLength(0);
+    });
+
+    test('posts to the act-on endpoint with the suggestion id in the body', async () => {
+        state.pendingRecommendationResultId = 42;
+        const fetchFn = setupFetch();
+        const mark = makeMarkRecommendationActedOn(state, fetchFn);
+        await mark(99);
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0].url).toBe('/api/recommendations/results/42/act-on');
+        expect(fetchCalls[0].opts.method).toBe('POST');
+        expect(JSON.parse(fetchCalls[0].opts.body)).toEqual({ suggestionId: 99 });
+    });
+
+    test('clears the pending id after marking, so the next create does not double-mark', async () => {
+        state.pendingRecommendationResultId = 42;
+        const fetchFn = setupFetch();
+        const mark = makeMarkRecommendationActedOn(state, fetchFn);
+        await mark(99);
+        expect(state.pendingRecommendationResultId).toBeNull();
+
+        // A second create (with no recommendation in flight) must not call the endpoint.
+        await mark(100);
+        expect(fetchCalls).toHaveLength(1);
+    });
+
+    test('clears pending id even when no suggestion id is passed', async () => {
+        state.pendingRecommendationResultId = 42;
+        const fetchFn = setupFetch();
+        const mark = makeMarkRecommendationActedOn(state, fetchFn);
+        await mark(null);
+        expect(state.pendingRecommendationResultId).toBeNull();
+    });
+
+    test('swallows network errors silently so the suggestion-create flow is unaffected', async () => {
+        state.pendingRecommendationResultId = 42;
+        const fetchFn = setupFetch({ throws: true });
+        const mark = makeMarkRecommendationActedOn(state, fetchFn);
+        await expect(mark(99)).resolves.toBeUndefined();
+    });
+
+    test('URL-encodes the result id', async () => {
+        // The id is numeric in practice, but encodeURIComponent should still
+        // be applied to keep this resilient to any future change in id type.
+        state.pendingRecommendationResultId = 'a/b';
+        const fetchFn = setupFetch();
+        const mark = makeMarkRecommendationActedOn(state, fetchFn);
+        await mark(1);
+        expect(fetchCalls[0].url).toBe('/api/recommendations/results/a%2Fb/act-on');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// recommendations — refreshRecommendationsHistory() and startFreshRecommendationsRun()
+// ---------------------------------------------------------------------------
+
+function makeRefreshRecommendationsHistory(loadFn, showFilterBarFn) {
+    return async function refreshRecommendationsHistory() {
+        showFilterBarFn(true);
+        await loadFn();
+    };
+}
+
+function makeStartFreshRecommendationsRun(closeFn, fetchFn) {
+    return function startFreshRecommendationsRun() {
+        closeFn();
+        return fetchFn();
+    };
+}
+
+describe('refreshRecommendationsHistory()', () => {
+    test('shows the filter bar and reloads the list', async () => {
+        let loaded = 0;
+        let filterBarShown = null;
+        const refresh = makeRefreshRecommendationsHistory(
+            async () => { loaded++; },
+            (visible) => { filterBarShown = visible; }
+        );
+        await refresh();
+        expect(loaded).toBe(1);
+        expect(filterBarShown).toBe(true);
+    });
+});
+
+describe('startFreshRecommendationsRun()', () => {
+    test('closes the history modal and starts a new recommendation run', () => {
+        let closed = 0;
+        let started = 0;
+        const startFresh = makeStartFreshRecommendationsRun(
+            () => { closed++; },
+            () => { started++; return 'fetch-promise'; }
+        );
+        const result = startFresh();
+        expect(closed).toBe(1);
+        expect(started).toBe(1);
+        expect(result).toBe('fetch-promise');
+    });
+});
+
+// ---------------------------------------------------------------------------
 // projectDefinition — formatFileSize()
 // ---------------------------------------------------------------------------
 

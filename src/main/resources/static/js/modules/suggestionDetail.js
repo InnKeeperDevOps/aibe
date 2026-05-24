@@ -143,6 +143,25 @@ export async function loadDetail(id) {
         changelogEl.style.display = 'none';
     }
 
+    // Per-suggestion cost summary (admin only). Fetched lazily so failures
+    // don't block the rest of the detail render.
+    const costEl = document.getElementById('detailCostSummary');
+    if (costEl) {
+        costEl.style.display = 'none';
+        costEl.textContent = '';
+        if (isAdmin) {
+            api('/costs/suggestion/' + id).then(cost => {
+                if (!cost || cost.error || cost.reviewCount === 0) return;
+                costEl.textContent = 'Claude spend on this suggestion: '
+                    + (cost.displayCostUsd || ('$' + (cost.totalCostUsd ?? 0)))
+                    + '  ·  ' + cost.reviewCount + ' expert review'
+                    + (cost.reviewCount === 1 ? '' : 's')
+                    + '  ·  ' + (cost.totalTokens || 0).toLocaleString() + ' tokens';
+                costEl.style.display = '';
+            }).catch(() => { /* ignore */ });
+        }
+    }
+
     // Admin actions
     const canApprove = ['PLANNED', 'DISCUSSING'].includes(suggestion.status);
     const canForceReApproval = ['PLANNED', 'APPROVED'].includes(suggestion.status);

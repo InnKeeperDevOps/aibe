@@ -38,6 +38,7 @@ export function updateHeader() {
     const settingsBtn = document.getElementById('settingsBtn');
     const claudeLogsBtn = document.getElementById('claudeLogsBtn');
     const claudeQueueBtn = document.getElementById('claudeQueueBtn');
+    const spendingBtn = document.getElementById('spendingBtn');
 
     if (loggedIn) {
         badge.textContent = username + ' (' + role + ')';
@@ -48,6 +49,7 @@ export function updateHeader() {
         settingsBtn.style.display = isAdmin ? '' : 'none';
         if (claudeLogsBtn) claudeLogsBtn.style.display = isAdmin ? '' : 'none';
         if (claudeQueueBtn) claudeQueueBtn.style.display = isAdmin ? '' : 'none';
+        if (spendingBtn) spendingBtn.style.display = isAdmin ? '' : 'none';
     } else {
         badge.style.display = 'none';
         loginBtn.style.display = '';
@@ -55,6 +57,7 @@ export function updateHeader() {
         settingsBtn.style.display = 'none';
         if (claudeLogsBtn) claudeLogsBtn.style.display = 'none';
         if (claudeQueueBtn) claudeQueueBtn.style.display = 'none';
+        if (spendingBtn) spendingBtn.style.display = 'none';
     }
     updateNewSuggestionBtn();
     updateAiRecommendationsBtn();

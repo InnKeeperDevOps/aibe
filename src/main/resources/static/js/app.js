@@ -144,6 +144,10 @@ import {
 } from './modules/claudeQueue.js';
 
 import {
+    loadSpendingDashboard,
+} from './modules/spendingDashboard.js';
+
+import {
     loadSettings,
     loadGroups,
     editGroup,
@@ -259,6 +263,7 @@ registerNavigationCallbacks({
     loadClaudeLogDetail,
     loadClaudeQueue,
     stopClaudeQueuePolling,
+    loadSpendingDashboard,
     disconnectWs,
     updateSaveAsDraftBtn: () => {
         const btn = document.getElementById('saveAsDraftBtn');
@@ -402,6 +407,9 @@ window.app = {
     // claude queue
     loadClaudeQueue,
     stopClaudeQueuePolling,
+
+    // spending dashboard
+    loadSpendingDashboard,
 
     // settings / admin
     loadSettings,

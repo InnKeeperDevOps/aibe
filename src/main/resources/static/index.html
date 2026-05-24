@@ -29,6 +29,9 @@
                     <button id="claudeLogsBtn" class="menu-item" role="menuitem" type="button"
                             style="display:none"
                             onclick="app.navigate('claudeLogs')">Claude Logs</button>
+                    <button id="spendingBtn" class="menu-item" role="menuitem" type="button"
+                            style="display:none"
+                            onclick="app.navigate('spending')">Spending</button>
                     <button id="settingsBtn" class="menu-item" role="menuitem" type="button"
                             style="display:none"
                             onclick="app.navigate('settings')">Settings</button>
@@ -404,6 +407,9 @@
                 <pre id="detailChangelogText" style="white-space:pre-wrap;margin-top:0.5rem;font-size:0.85rem"></pre>
             </div>
 
+            <div id="detailCostSummary" style="display:none;margin-top:0.75rem;
+                    color:var(--text-muted);font-size:0.85rem"></div>
+
             <div id="adminActions" class="admin-actions" style="display:none">
                 <button class="btn btn-success btn-sm" onclick="app.approve()">Approve</button>
                 <button class="btn btn-danger btn-sm" onclick="app.deny()">Deny</button>
@@ -553,6 +559,26 @@
         </table>
     </div>
 
+    <!-- Spending Dashboard View -->
+    <div id="spendingView" class="view" style="display:none">
+        <span class="back-btn" onclick="app.navigate('list')">&larr; Back</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+            <h2 style="margin:0">Spending</h2>
+            <button class="btn btn-outline btn-sm" onclick="app.loadSpendingDashboard()">Refresh</button>
+        </div>
+        <p style="color:var(--text-muted);font-size:0.9rem;margin-top:0.25rem">
+            Claude API token usage and dollar spend for expert reviews. Configure caps and alert
+            thresholds on the <a href="#" onclick="app.navigate('settings');return false"
+            style="color:var(--primary)">Settings page</a>.
+        </p>
+        <div id="spendingError" style="display:none;color:var(--danger);margin-bottom:1rem"></div>
+        <div id="spendingCapStatus" class="card" style="margin-bottom:1rem"></div>
+        <div id="spendingTopSuggestions" style="margin-bottom:1.5rem"></div>
+        <div id="spendingTrend" style="margin-bottom:1.5rem"></div>
+        <div id="spendingRecent" style="margin-bottom:1.5rem"></div>
+        <div id="spendingHistory"></div>
+    </div>
+
     <!-- Claude Log Detail View -->
     <div id="claudeLogDetailView" class="view" style="display:none">
         <span class="back-btn" onclick="app.navigate('claudeLogs')">&larr; Back to Claude Logs</span>
@@ -611,6 +637,56 @@
                     <label>Max Concurrent Suggestions</label>
                     <input type="number" id="settingMaxConcurrentSuggestions"
                            placeholder="1" min="1" max="50">
+                </div>
+                <div class="form-group" style="grid-column:1/-1">
+                    <h3 style="margin:0 0 0.5rem 0;font-size:1rem;border-top:1px solid var(--border);padding-top:1rem">
+                        Spending caps
+                    </h3>
+                    <small style="color:var(--text-muted);display:block;margin-bottom:0.75rem">
+                        Limit Claude API spend. Leave a cap blank to disable that cap.
+                        See current spend on the <a href="#" onclick="app.navigate('spending');return false"
+                        style="color:var(--primary)">Spending page</a>.
+                    </small>
+                </div>
+                <div class="form-group">
+                    <label>Max cost per suggestion (USD)</label>
+                    <input type="number" id="settingMaxCostPerSuggestionUsd"
+                           placeholder="e.g. 5.00" min="0" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>Max total cost (USD)</label>
+                    <input type="number" id="settingMaxTotalCostUsd"
+                           placeholder="e.g. 100.00" min="0" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>Global cost reset window</label>
+                    <select id="settingGlobalCostResetPeriod">
+                        <option value="NEVER">Never (running total)</option>
+                        <option value="DAILY">Daily (UTC midnight)</option>
+                        <option value="MONTHLY">Monthly (1st of month, UTC)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Alert thresholds (% of cap)</label>
+                    <input type="text" id="settingSpendingAlertThresholds"
+                           placeholder="75,90">
+                    <small style="color:var(--text-muted);font-size:0.8rem">
+                        Comma-separated percentages. An alert fires the first time spend crosses each
+                        threshold within the current window, and again when the cap is reached.
+                    </small>
+                </div>
+                <div class="form-group" style="grid-column:1/-1">
+                    <label>Spending alert recipients</label>
+                    <textarea id="settingSpendingAlertRecipients" rows="2"
+                              placeholder="Comma- or newline-separated usernames / emails who get alerts"
+                              style="width:100%"></textarea>
+                </div>
+                <div class="toggle-row">
+                    <span class="toggle-label">Send spending alerts</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="settingSpendingAlertsEnabled">
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
                 <div class="toggle-row">
                     <span class="toggle-label">Allow Anonymous Suggestions</span>

@@ -10,6 +10,21 @@ export async function loadSettings() {
     document.getElementById('settingRepoUrl').value = settings.targetRepoUrl || '';
     const managedFoldersEl = document.getElementById('settingManagedFolders');
     if (managedFoldersEl) managedFoldersEl.value = settings.managedFolders || '';
+
+    // Spending caps + alerts
+    const maxCostSugg = document.getElementById('settingMaxCostPerSuggestionUsd');
+    if (maxCostSugg) maxCostSugg.value = settings.maxCostPerSuggestionUsd ?? '';
+    const maxTotalCost = document.getElementById('settingMaxTotalCostUsd');
+    if (maxTotalCost) maxTotalCost.value = settings.maxTotalCostUsd ?? '';
+    const resetPeriod = document.getElementById('settingGlobalCostResetPeriod');
+    if (resetPeriod) resetPeriod.value = settings.globalCostResetPeriod || 'NEVER';
+    const alertsEnabled = document.getElementById('settingSpendingAlertsEnabled');
+    if (alertsEnabled) alertsEnabled.checked = settings.spendingAlertsEnabled !== false;
+    const alertThresholds = document.getElementById('settingSpendingAlertThresholds');
+    if (alertThresholds) alertThresholds.value = settings.spendingAlertThresholds || '';
+    const alertRecipients = document.getElementById('settingSpendingAlertRecipients');
+    if (alertRecipients) alertRecipients.value = settings.spendingAlertRecipients || '';
+
     document.getElementById('settingTimeout').value = settings.suggestionTimeoutMinutes || 1440;
     document.getElementById('settingGithubToken').value = settings.githubToken || '';
     document.getElementById('settingClaudeModel').value = settings.claudeModel || '';
@@ -393,6 +408,16 @@ export async function assignUserGroup(userId, groupId) {
     if (data.error) { alert(data.error); }
 }
 
+// Parse a currency input field into a number (or null when blank). Spending
+// caps are nullable on the backend — empty string = no cap.
+function _parseCurrency(el) {
+    if (!el) return null;
+    const raw = (el.value || '').trim();
+    if (raw === '') return null;
+    const n = Number(raw);
+    return isNaN(n) ? null : n;
+}
+
 function _renderGitSshPublicKey(publicKey) {
     const box = document.getElementById('settingGitSshPublicKeyBox');
     const textarea = document.getElementById('settingGitSshPublicKey');
@@ -448,6 +473,12 @@ export async function saveSettings() {
             siteName: document.getElementById('settingSiteName').value,
             targetRepoUrl: document.getElementById('settingRepoUrl').value,
             managedFolders: (document.getElementById('settingManagedFolders') || {}).value || null,
+            maxCostPerSuggestionUsd: _parseCurrency(document.getElementById('settingMaxCostPerSuggestionUsd')),
+            maxTotalCostUsd: _parseCurrency(document.getElementById('settingMaxTotalCostUsd')),
+            globalCostResetPeriod: (document.getElementById('settingGlobalCostResetPeriod') || {}).value || 'NEVER',
+            spendingAlertsEnabled: (document.getElementById('settingSpendingAlertsEnabled') || {}).checked !== false,
+            spendingAlertThresholds: ((document.getElementById('settingSpendingAlertThresholds') || {}).value || '').trim() || null,
+            spendingAlertRecipients: ((document.getElementById('settingSpendingAlertRecipients') || {}).value || '').trim() || null,
             suggestionTimeoutMinutes: parseInt(document.getElementById('settingTimeout').value) || 1440,
             githubToken: document.getElementById('settingGithubToken').value || null,
             claudeModel: document.getElementById('settingClaudeModel').value || null,

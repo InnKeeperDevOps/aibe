@@ -12,6 +12,7 @@ const _callbacks = {
     loadClaudeLogDetail: () => {},
     loadClaudeQueue: () => {},
     stopClaudeQueuePolling: () => {},
+    loadSpendingDashboard: () => {},
     disconnectWs: () => {},
     updateSaveAsDraftBtn: () => {},
 };
@@ -67,6 +68,7 @@ export function navigate(view, data) {
         case 'claudeLogs': _callbacks.loadClaudeLogs(); break;
         case 'claudeLogDetail': _callbacks.loadClaudeLogDetail(data); break;
         case 'claudeQueue': _callbacks.loadClaudeQueue(); break;
+        case 'spending': _callbacks.loadSpendingDashboard(); break;
         case 'login': {
             const regDisabled = state.settings.registrationsEnabled === false;
             const createLink = document.getElementById('createAccountLink');

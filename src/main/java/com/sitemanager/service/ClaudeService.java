@@ -1965,6 +1965,68 @@ public class ClaudeService {
     }
 
     private String gitClone(String repoUrl, String targetDir) throws Exception {
+        try {
+            return doGitClone(repoUrl, targetDir);
+        } catch (RuntimeException e) {
+            String msg = String.valueOf(e.getMessage());
+            // "fatal: unable to write new index file" is git's generic failure when it
+            // cannot rename .git/index.lock onto .git/index — almost always caused by
+            // transient disk pressure on the workspace volume. The most common source
+            // here is the .trash-<uuid>/ siblings that evictStaleWorkspaceDir leaves
+            // behind: rename is instant but the actual deletion runs on a daemon
+            // thread, so if a fresh clone is kicked off while a previous trash tree
+            // (full node_modules / .gradle / build artifacts) is still being torn
+            // down, the workspace can be temporarily out of space or inodes when
+            // git tries to commit its index. Wait for outstanding cleanups to drain,
+            // re-evict any partial clone, and retry once before surfacing the
+            // failure.
+            if (!msg.contains("unable to write new index file")) {
+                throw e;
+            }
+            log.warn("Git clone failed with transient index-write error; "
+                    + "waiting for pending workspace cleanups and retrying once: {}", msg);
+            waitForPendingWorkspaceDeletes(60_000L);
+            File partial = new File(targetDir);
+            if (partial.exists()) {
+                try {
+                    evictStaleWorkspaceDir(partial.toPath());
+                } catch (Exception cleanupErr) {
+                    log.warn("Could not evict partial clone {} before retry: {}",
+                            targetDir, cleanupErr.getMessage());
+                }
+            }
+            return doGitClone(repoUrl, targetDir);
+        }
+    }
+
+    /** Background trash-delete threads spawned by {@link #scheduleBackgroundDelete}. */
+    private final java.util.concurrent.CopyOnWriteArrayList<Thread> pendingWorkspaceDeletes =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Block until every currently-pending background workspace delete has either
+     * finished or {@code timeoutMs} has elapsed across the wait as a whole.
+     * Used by {@link #gitClone} to recover disk space pressure before retrying
+     * a clone that died with "unable to write new index file".
+     */
+    private void waitForPendingWorkspaceDeletes(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        for (Thread t : pendingWorkspaceDeletes) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                log.warn("Timed out waiting for background workspace cleanups to finish");
+                return;
+            }
+            try {
+                t.join(remaining);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    private String doGitClone(String repoUrl, String targetDir) throws Exception {
         long startTime = System.currentTimeMillis();
 
         File dir = new File(targetDir);
@@ -2082,6 +2144,7 @@ public class ClaudeService {
      * visible without blocking any caller.
      */
     private void scheduleBackgroundDelete(Path path) {
+        final Thread[] holder = new Thread[1];
         Thread t = new Thread(() -> {
             long start = System.currentTimeMillis();
             try {
@@ -2099,9 +2162,13 @@ public class ClaudeService {
             } catch (Exception e) {
                 log.warn("Background cleanup of {} errored after {}ms: {}",
                         path, System.currentTimeMillis() - start, e.getMessage());
+            } finally {
+                pendingWorkspaceDeletes.remove(holder[0]);
             }
         }, "workspace-cleanup");
+        holder[0] = t;
         t.setDaemon(true);
+        pendingWorkspaceDeletes.add(t);
         t.start();
     }
 

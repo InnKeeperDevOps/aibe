@@ -72,11 +72,9 @@ export function updateNewSuggestionBtn() {
 }
 
 export function updateAiRecommendationsBtn() {
-    const btn = document.getElementById('aiRecommendationsBtn');
     const historyBtn = document.getElementById('recommendationsHistoryBtn');
     const { loggedIn, role } = state;
     const visible = loggedIn && (role === 'ROOT_ADMIN' || role === 'ADMIN');
-    if (btn) btn.style.display = visible ? '' : 'none';
     if (historyBtn) historyBtn.style.display = visible ? '' : 'none';
 }
 

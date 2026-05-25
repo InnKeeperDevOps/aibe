@@ -172,14 +172,6 @@ function renderPlansList() {
         const inFlightBadge = inFlight > 0
             ? `<span style="color:${STATUS_COLORS.IN_PROGRESS};font-size:0.8rem;font-weight:600">${inFlight} active</span>`
             : '';
-        const lowLevelBlock = lowLevel ? `
-            <div style="margin-top:0.65rem;padding-top:0.65rem;border-top:1px dashed var(--border);font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.75rem;color:var(--text-muted);display:grid;grid-template-columns:auto 1fr;gap:0.25rem 0.75rem">
-                <div>id</div><div>#${p.suggestionId}</div>
-                <div>created</div><div>${esc(fmtIso(p.createdAt))}</div>
-                <div>last activity</div><div>${esc(fmtIso(p.lastActivityAt))}</div>
-                <div>phase</div><div>${esc(p.currentPhase || '—')}</div>
-                <div>tasks</div><div>pending ${p.totalTasks - p.completedTasks - p.inProgressTasks - p.reviewingTasks - p.failedTasks} · in-progress ${p.inProgressTasks || 0} · reviewing ${p.reviewingTasks || 0} · completed ${p.completedTasks || 0} · failed ${p.failedTasks || 0}</div>
-            </div>` : '';
         return `<div class="card plan-card" style="cursor:pointer" onclick="app.navigate('planDetail', ${p.suggestionId})">
             <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start">
                 <div style="min-width:0;flex:1">
@@ -198,7 +190,6 @@ function renderPlansList() {
             <div style="margin-top:0.6rem;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
                 <div style="height:100%;width:${pct}%;background:${completedColor};transition:width 0.2s"></div>
             </div>
-            ${lowLevelBlock}
         </div>`;
     }).join('');
 }
@@ -267,33 +258,7 @@ function renderPlanDetail(data) {
             </div>`;
     }
 
-    // Low-level metadata block: raw identifiers, timestamps, working dir, expert review state.
-    if (metaEl) {
-        if (lowLevel) {
-            const rows = [
-                ['suggestion id', '#' + data.suggestionId],
-                ['suggestion status', data.suggestionStatus],
-                ['current phase', data.currentPhase],
-                ['created', fmtIso(data.createdAt)],
-                ['updated', fmtIso(data.updatedAt)],
-                ['last activity', fmtIso(data.lastActivityAt)],
-                ['claude session', data.claudeSessionId],
-                ['working dir', data.workingDirectory],
-                ['expert review', data.expertReviewStep != null || data.expertReviewRound != null
-                    ? `step ${data.expertReviewStep ?? '—'} · round ${data.expertReviewRound ?? '—'}${data.totalExpertReviewRounds != null ? ' of ' + data.totalExpertReviewRounds : ''}${data.expertReviewPlanChanged ? ' · plan changed' : ''}`
-                    : null],
-                ['failure reason', data.failureReason],
-            ].filter(([, v]) => v != null && v !== '');
-            metaEl.innerHTML = `
-                <div style="font-weight:600;margin-bottom:0.5rem">Low-level metadata</div>
-                <div style="font-family:ui-monospace,SFMono-Regular,monospace;display:grid;grid-template-columns:max-content 1fr;gap:0.25rem 0.75rem">
-                    ${rows.map(([k, v]) => `<div style="color:var(--text-muted)">${esc(k)}</div><div style="word-break:break-all">${esc(String(v))}</div>`).join('')}
-                </div>`;
-            metaEl.style.display = '';
-        } else {
-            metaEl.style.display = 'none';
-        }
-    }
+    if (metaEl) metaEl.style.display = 'none';
 
     // Plan summary block: technical when low-level, friendly otherwise. When
     // low-level is on but planSummary is empty, show an explicit placeholder
@@ -341,18 +306,6 @@ function renderPlanDetail(data) {
         }
         if (t.retryCount && t.retryCount > 0) meta += (meta ? ' · ' : '') + `${t.retryCount} retries`;
 
-        const lowLevelTaskBlock = lowLevel ? `
-            <div style="margin-top:0.5rem;padding:0.5rem 0.75rem;background:#f8fafc;border-radius:4px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.72rem;color:var(--text-muted);display:grid;grid-template-columns:max-content 1fr;gap:0.2rem 0.75rem">
-                <div>task id</div><div>#${t.id}</div>
-                <div>order</div><div>${t.taskOrder}</div>
-                <div>status</div><div>${esc(t.status)}</div>
-                <div>started</div><div>${esc(fmtIso(t.startedAt)) || '—'}</div>
-                <div>completed</div><div>${esc(fmtIso(t.completedAt)) || '—'}</div>
-                <div>retries</div><div>${t.retryCount || 0}</div>
-                ${t.displayTitle && t.title && t.displayTitle !== t.title ? `<div>friendly title</div><div>${esc(t.displayTitle)}</div>` : ''}
-                ${t.displayDescription && t.description && t.displayDescription !== t.description ? `<div>friendly desc</div><div style="white-space:pre-wrap">${esc(t.displayDescription)}</div>` : ''}
-            </div>` : '';
-
         const titleStyle = lowLevelMissing ? 'font-weight:600;color:var(--text-muted);font-style:italic' : 'font-weight:600';
         const descStyle = descMissing
             ? 'margin-top:0.25rem;color:var(--text-muted);font-size:0.85rem;font-style:italic'
@@ -366,7 +319,6 @@ function renderPlanDetail(data) {
                     ${t.statusDetail ? `<div style="margin-top:0.35rem;font-size:0.8rem;color:var(--text-muted)">${esc(t.statusDetail)}</div>` : ''}
                     ${t.failureReason ? `<div style="margin-top:0.35rem;font-size:0.8rem;color:${STATUS_COLORS.FAILED}">⚠ ${esc(t.failureReason)}</div>` : ''}
                     ${meta ? `<div style="margin-top:0.25rem;font-size:0.75rem;color:var(--text-muted)">${meta}</div>` : ''}
-                    ${lowLevelTaskBlock}
                 </div>
                 <div>${statusPill(t.status)}</div>
             </div>
@@ -450,30 +402,13 @@ function renderTasksTable() {
         } else if (t.startedAt) {
             dur = fmtDur(ms) + ' (running)';
         }
-        const mainRow = `<tr class="task-row" style="cursor:pointer" onclick="app.navigate('planDetail', ${t.suggestionId})">
+        return `<tr class="task-row" style="cursor:pointer" onclick="app.navigate('planDetail', ${t.suggestionId})">
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.85rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.suggestionTitle || ('#' + t.suggestionId))}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.85rem;color:var(--text-muted)">${t.taskOrder}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.85rem;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${titleStyle}">${esc(title || '')}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border)">${statusPill(t.status)}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.8rem;color:var(--text-muted)">${t.startedAt ? esc(timeAgo(t.startedAt)) : ''}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.8rem;color:var(--text-muted)">${dur}</td>
-        </tr>`;
-        if (!showTech) return mainRow;
-        const friendlyTitle = (t.displayTitle && t.displayTitle !== t.title) ? t.displayTitle : null;
-        return mainRow + `<tr class="task-row-detail">
-            <td colspan="6" style="padding:0.4rem 0.75rem 0.85rem 2rem;border-bottom:1px solid var(--border);background:#f8fafc;font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.72rem;color:var(--text-muted)">
-                <div style="display:grid;grid-template-columns:max-content 1fr;gap:0.15rem 0.75rem">
-                    <div>task id</div><div>#${t.id}</div>
-                    <div>suggestion id</div><div>#${t.suggestionId}</div>
-                    <div>started</div><div>${esc(fmtIso(t.startedAt)) || '—'}</div>
-                    <div>completed</div><div>${esc(fmtIso(t.completedAt)) || '—'}</div>
-                    <div>duration</div><div>${ms != null ? fmtDur(ms) : '—'}</div>
-                    <div>retries</div><div>${t.retryCount || 0}</div>
-                    ${friendlyTitle ? `<div>friendly title</div><div>${esc(friendlyTitle)}</div>` : ''}
-                    ${t.statusDetail ? `<div>status detail</div><div style="white-space:pre-wrap">${esc(t.statusDetail)}</div>` : ''}
-                    ${t.failureReason ? `<div style="color:${STATUS_COLORS.FAILED}">failure</div><div style="white-space:pre-wrap;color:${STATUS_COLORS.FAILED}">${esc(t.failureReason)}</div>` : ''}
-                </div>
-            </td>
         </tr>`;
     }).join('');
 }

@@ -252,6 +252,13 @@ export async function loadDetail(id) {
     const restartPlanActions = document.getElementById('restartPlanActions');
     if (restartPlanActions) restartPlanActions.style.display = canRestartPlan ? '' : 'none';
 
+    // Redo from scratch — available to admins on any non-merged, non-draft suggestion.
+    // Wipes plan, tasks, and discussion thread, then re-runs the initial AI evaluation.
+    const canRedoFromScratch = isAdmin
+            && !['MERGED', 'DRAFT'].includes(suggestion.status);
+    const redoFromScratchActions = document.getElementById('redoFromScratchActions');
+    if (redoFromScratchActions) redoFromScratchActions.style.display = canRedoFromScratch ? '' : 'none';
+
     // Reply box visibility
     const statusAllowsReply = ['DRAFT', 'DISCUSSING', 'PLANNED'].includes(suggestion.status);
     const hasReplyPermission = isAdmin || state.permissions.includes('REPLY');
@@ -451,6 +458,25 @@ export async function restartPlan() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Restart Plan (fresh repo)';
+    }
+}
+
+export async function redoFromScratch() {
+    if (!confirm('This will DELETE the current plan, all tasks, and the entire discussion thread, then re-run the AI evaluation from step 1. The suggestion title, description, votes, and priority are preserved. This cannot be undone. Continue?')) return;
+    if (!confirm('Are you sure? Everything except the original suggestion text will be wiped.')) return;
+    const btn = document.querySelector('#redoFromScratchActions button');
+    btn.disabled = true;
+    btn.textContent = 'Wiping & restarting...';
+    try {
+        const result = await api('/suggestions/' + state.currentSuggestion + '/restart-from-scratch', { method: 'POST' });
+        if (result && result.error) {
+            alert('Redo failed: ' + result.error);
+        }
+    } catch (e) {
+        alert('Redo failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Redo from scratch';
     }
 }
 

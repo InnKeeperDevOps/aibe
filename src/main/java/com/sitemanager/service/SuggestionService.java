@@ -800,6 +800,73 @@ public class SuggestionService {
         return suggestion;
     }
 
+    /**
+     * Wipe the plan, tasks, and discussion thread, then re-run the initial AI
+     * evaluation from step 1. Preserves the suggestion's title, description,
+     * author, priority, and votes. Used when the plan went off-track and the
+     * admin wants Claude to start over with a fresh session.
+     */
+    @Transactional
+    public Suggestion restartFromScratch(Long suggestionId) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId)
+                .orElseThrow(() -> new IllegalStateException("Suggestion not found"));
+
+        SuggestionStatus status = suggestion.getStatus();
+        if (status == SuggestionStatus.MERGED) {
+            throw new IllegalStateException("Cannot redo a suggestion that has already been merged.");
+        }
+        if (status == SuggestionStatus.DRAFT) {
+            throw new IllegalStateException("This suggestion is still a draft — nothing to redo yet.");
+        }
+
+        log.info("[AI-FLOW] suggestion={} restart-from-scratch: wiping plan, tasks, and messages (was: {})",
+                suggestionId, status);
+
+        // Wipe the plan tasks and the discussion thread.
+        planTaskRepository.deleteBySuggestionId(suggestionId);
+        List<SuggestionMessage> messages = messageRepository.findBySuggestionIdOrderByCreatedAtAsc(suggestionId);
+        if (!messages.isEmpty()) {
+            messageRepository.deleteAll(messages);
+        }
+
+        // Clear plan, expert-review, PR, and working-directory state. A fresh
+        // claudeSessionId is generated so Claude starts a brand-new conversation.
+        suggestion.setPlanSummary(null);
+        suggestion.setPlanDisplaySummary(null);
+        suggestion.setPendingClarificationQuestions(null);
+        suggestion.setClaudeSessionId(java.util.UUID.randomUUID().toString());
+        suggestion.setWorkingDirectory(null);
+        suggestion.setPrUrl(null);
+        suggestion.setPrNumber(null);
+        suggestion.setChangelogEntry(null);
+        suggestion.setFailureReason(null);
+        suggestion.setExpertReviewStep(null);
+        suggestion.setExpertReviewRound(null);
+        suggestion.setExpertReviewNotes(null);
+        suggestion.setExpertReviewPlanChanged(null);
+        suggestion.setTotalExpertReviewRounds(null);
+        suggestion.setExpertReviewChangedDomains(null);
+        suggestion.setExpertApprovalTracker(null);
+        suggestion.setOwnerLockedPlanSections(null);
+        suggestion.setStatus(SuggestionStatus.DISCUSSING);
+        suggestion.setCurrentPhase("Restarting from step 1...");
+        suggestion.setLastActivityAt(Instant.now());
+        suggestionRepository.save(suggestion);
+
+        // Seed the now-empty thread with the original suggestion text so the
+        // discussion still has context, then announce the redo.
+        messagingHelper.addMessage(suggestionId, SenderType.USER, suggestion.getAuthorName(),
+                "**" + suggestion.getTitle() + "**\n\n" + suggestion.getDescription());
+        messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                "Plan and discussion have been wiped. Re-running the initial AI evaluation from step 1.");
+
+        messagingHelper.broadcastUpdate(suggestion);
+        messagingHelper.broadcastTasks(suggestionId);
+
+        triggerAiEvaluation(suggestion);
+        return suggestion;
+    }
+
     public Map<String, Object> retryPrCreation(Long suggestionId) {
         return planExecutionService.retryPrCreation(suggestionId);
     }

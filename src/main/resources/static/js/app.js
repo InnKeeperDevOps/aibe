@@ -154,6 +154,7 @@ import {
     loadAllTasks,
     filterPlans,
     filterAllTasks,
+    toggleLowLevelDetail,
 } from './modules/plans.js';
 
 import {
@@ -436,6 +437,7 @@ window.app = {
     loadAllTasks,
     filterPlans,
     filterAllTasks,
+    toggleLowLevelDetail,
 
     // change password
     openChangePasswordModal,

@@ -675,7 +675,13 @@
     <div id="plansView" class="view" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
             <h2 style="margin:0">Plans</h2>
-            <div style="display:flex;gap:0.5rem;align-items:center">
+            <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap">
+                <label style="font-size:0.8rem;color:var(--text-muted);cursor:pointer;user-select:none">
+                    <input type="checkbox" class="lowLevelToggle"
+                           onchange="app.toggleLowLevelDetail(this.checked)"
+                           style="vertical-align:middle;margin-right:0.25rem">
+                    Show low-level detail
+                </label>
                 <input id="plansFilter" type="text" placeholder="Filter by title or author"
                        style="width:240px" oninput="app.filterPlans()">
                 <button class="btn btn-outline btn-sm" onclick="app.loadPlans()">Refresh</button>
@@ -691,17 +697,33 @@
 
     <!-- Plan Detail View -->
     <div id="planDetailView" class="view" style="display:none">
-        <span class="back-btn" onclick="app.navigate('plans')">&larr; Back to Plans</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+            <span class="back-btn" onclick="app.navigate('plans')">&larr; Back to Plans</span>
+            <label style="font-size:0.8rem;color:var(--text-muted);cursor:pointer;user-select:none">
+                <input type="checkbox" class="lowLevelToggle"
+                       onchange="app.toggleLowLevelDetail(this.checked)"
+                       style="vertical-align:middle;margin-right:0.25rem">
+                Show low-level detail
+            </label>
+        </div>
         <div id="planDetailHeader" style="margin-top:0.5rem"></div>
+        <div id="planDetailMeta" class="card" style="display:none;margin-top:0.75rem;background:#f8fafc;font-size:0.8rem"></div>
+        <div id="planDetailSummary" class="card" style="display:none;margin-top:0.75rem;background:#f0fdf4"></div>
         <div id="planDetailError" style="display:none;color:var(--danger);margin:1rem 0"></div>
-        <div id="planDetailTasks" class="card"></div>
+        <div id="planDetailTasks" class="card" style="margin-top:0.75rem"></div>
     </div>
 
     <!-- Tasks View (cross-plan) -->
     <div id="tasksView" class="view" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
             <h2 style="margin:0">Tasks</h2>
-            <div style="display:flex;gap:0.5rem;align-items:center">
+            <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap">
+                <label style="font-size:0.8rem;color:var(--text-muted);cursor:pointer;user-select:none">
+                    <input type="checkbox" class="lowLevelToggle"
+                           onchange="app.toggleLowLevelDetail(this.checked)"
+                           style="vertical-align:middle;margin-right:0.25rem">
+                    Show low-level detail
+                </label>
                 <select id="tasksStatusFilter" onchange="app.filterAllTasks()" style="width:auto">
                     <option value="">All statuses</option>
                     <option value="PENDING">Pending</option>

@@ -155,8 +155,18 @@ public class PlanController {
         body.put("planSummary", s.getPlanSummary());
         body.put("planDisplaySummary", s.getPlanDisplaySummary());
         body.put("createdAt", s.getCreatedAt());
+        body.put("updatedAt", s.getUpdatedAt());
         body.put("lastActivityAt", s.getLastActivityAt());
         body.put("prUrl", s.getPrUrl());
+        body.put("prNumber", s.getPrNumber());
+        body.put("claudeSessionId", s.getClaudeSessionId());
+        body.put("workingDirectory", s.getWorkingDirectory());
+        body.put("expertReviewStep", s.getExpertReviewStep());
+        body.put("expertReviewRound", s.getExpertReviewRound());
+        body.put("totalExpertReviewRounds", s.getTotalExpertReviewRounds());
+        body.put("expertReviewNotes", s.getExpertReviewNotes());
+        body.put("expertReviewPlanChanged", s.getExpertReviewPlanChanged());
+        body.put("failureReason", s.getFailureReason());
         body.put("tasks", tasks);
         return ResponseEntity.ok(body);
     }

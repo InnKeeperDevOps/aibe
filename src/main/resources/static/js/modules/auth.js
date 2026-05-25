@@ -40,6 +40,9 @@ export function updateHeader() {
     const claudeQueueBtn = document.getElementById('claudeQueueBtn');
     const spendingBtn = document.getElementById('spendingBtn');
     const changePasswordBtn = document.getElementById('changePasswordBtn');
+    const plansBtn = document.getElementById('plansBtn');
+    const tasksBtn = document.getElementById('tasksBtn');
+    const adminSection = document.getElementById('adminSidebarSection');
 
     if (loggedIn) {
         badge.textContent = username + ' (' + role + ')';
@@ -51,6 +54,9 @@ export function updateHeader() {
         if (claudeLogsBtn) claudeLogsBtn.style.display = isAdmin ? '' : 'none';
         if (claudeQueueBtn) claudeQueueBtn.style.display = isAdmin ? '' : 'none';
         if (spendingBtn) spendingBtn.style.display = isAdmin ? '' : 'none';
+        if (plansBtn) plansBtn.style.display = '';
+        if (tasksBtn) tasksBtn.style.display = '';
+        if (adminSection) adminSection.style.display = isAdmin ? '' : 'none';
         // Change password is available to every logged-in user, not just admins.
         if (changePasswordBtn) changePasswordBtn.style.display = '';
     } else {
@@ -61,6 +67,9 @@ export function updateHeader() {
         if (claudeLogsBtn) claudeLogsBtn.style.display = 'none';
         if (claudeQueueBtn) claudeQueueBtn.style.display = 'none';
         if (spendingBtn) spendingBtn.style.display = 'none';
+        if (plansBtn) plansBtn.style.display = 'none';
+        if (tasksBtn) tasksBtn.style.display = 'none';
+        if (adminSection) adminSection.style.display = 'none';
         if (changePasswordBtn) changePasswordBtn.style.display = 'none';
     }
     updateNewSuggestionBtn();

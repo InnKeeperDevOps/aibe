@@ -9,43 +9,13 @@
 <body>
 
 <header>
-    <div class="container">
+    <div class="header-inner">
+        <button id="menuToggle" class="menu-toggle" type="button" aria-label="Toggle navigation"
+                aria-haspopup="true" aria-expanded="false"
+                onclick="app.toggleMainMenu(event)">☰</button>
         <h1 id="siteName" onclick="app.navigate('list')">Site Suggestions</h1>
         <div class="header-actions">
             <span id="userBadge" class="user-badge" style="display:none"></span>
-            <div class="menu-wrapper">
-                <button id="menuToggle" class="menu-toggle" type="button" aria-label="Open menu"
-                        aria-haspopup="true" aria-expanded="false"
-                        onclick="app.toggleMainMenu(event)">☰</button>
-                <div id="mainMenu" class="menu-dropdown" role="menu" aria-labelledby="menuToggle">
-                    <button id="dashboardBtn" class="menu-item" role="menuitem" type="button"
-                            onclick="app.navigate('dashboard')">Dashboard</button>
-                    <button id="project-def-btn" class="menu-item" role="menuitem" type="button"
-                            style="display:none"
-                            onclick="app.openProjectDefinition()">Project Definition</button>
-                    <button id="claudeQueueBtn" class="menu-item" role="menuitem" type="button"
-                            style="display:none"
-                            onclick="app.navigate('claudeQueue')">Claude Queue</button>
-                    <button id="claudeLogsBtn" class="menu-item" role="menuitem" type="button"
-                            style="display:none"
-                            onclick="app.navigate('claudeLogs')">Claude Logs</button>
-                    <button id="spendingBtn" class="menu-item" role="menuitem" type="button"
-                            style="display:none"
-                            onclick="app.navigate('spending')">Spending</button>
-                    <button id="settingsBtn" class="menu-item" role="menuitem" type="button"
-                            style="display:none"
-                            onclick="app.navigate('settings')">Settings</button>
-                    <div id="menuAuthDivider" class="menu-divider"></div>
-                    <button id="changePasswordBtn" class="menu-item" role="menuitem" type="button"
-                            style="display:none"
-                            onclick="app.openChangePasswordModal()">Change Password</button>
-                    <button id="loginBtn" class="menu-item" role="menuitem" type="button"
-                            onclick="app.navigate('login')">Login</button>
-                    <button id="logoutBtn" class="menu-item" role="menuitem" type="button"
-                            style="display:none"
-                            onclick="app.logout()">Logout</button>
-                </div>
-            </div>
         </div>
     </div>
 </header>
@@ -55,6 +25,77 @@
     &mdash; <a href="#" onclick="app.navigate('list')" style="color:#bfdbfe;text-decoration:underline">View suggestions</a>
 </div>
 
+<div class="app-shell">
+
+<aside id="appSidebar" class="sidebar" aria-label="Main navigation">
+    <nav id="mainMenu" class="sidebar-nav" role="menu" aria-labelledby="menuToggle">
+        <div class="sidebar-section-label">Browse</div>
+        <button id="listBtn" class="sidebar-item" role="menuitem" type="button"
+                onclick="app.navigate('list')">
+            <span class="sidebar-icon">📋</span><span>Suggestions</span>
+        </button>
+        <button id="plansBtn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.navigate('plans')">
+            <span class="sidebar-icon">📑</span><span>Plans</span>
+        </button>
+        <button id="tasksBtn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.navigate('tasks')">
+            <span class="sidebar-icon">✓</span><span>Tasks</span>
+        </button>
+        <button id="dashboardBtn" class="sidebar-item" role="menuitem" type="button"
+                onclick="app.navigate('dashboard')">
+            <span class="sidebar-icon">📊</span><span>Dashboard</span>
+        </button>
+
+        <div id="adminSidebarSection" class="sidebar-section-label" style="display:none">Admin</div>
+        <button id="project-def-btn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.openProjectDefinition()">
+            <span class="sidebar-icon">🗂</span><span>Project Definition</span>
+        </button>
+        <button id="claudeQueueBtn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.navigate('claudeQueue')">
+            <span class="sidebar-icon">⏱</span><span>Claude Queue</span>
+        </button>
+        <button id="claudeLogsBtn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.navigate('claudeLogs')">
+            <span class="sidebar-icon">📜</span><span>Claude Logs</span>
+        </button>
+        <button id="spendingBtn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.navigate('spending')">
+            <span class="sidebar-icon">💰</span><span>Spending</span>
+        </button>
+        <button id="settingsBtn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.navigate('settings')">
+            <span class="sidebar-icon">⚙</span><span>Settings</span>
+        </button>
+
+        <div id="menuAuthDivider" class="sidebar-section-label">Account</div>
+        <button id="changePasswordBtn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.openChangePasswordModal()">
+            <span class="sidebar-icon">🔑</span><span>Change Password</span>
+        </button>
+        <button id="loginBtn" class="sidebar-item" role="menuitem" type="button"
+                onclick="app.navigate('login')">
+            <span class="sidebar-icon">→</span><span>Login</span>
+        </button>
+        <button id="logoutBtn" class="sidebar-item" role="menuitem" type="button"
+                style="display:none"
+                onclick="app.logout()">
+            <span class="sidebar-icon">←</span><span>Logout</span>
+        </button>
+    </nav>
+</aside>
+<div id="sidebarBackdrop" class="sidebar-backdrop" onclick="app.closeMainMenu()"></div>
+
+<main class="app-main">
 <div class="container">
 
     <!-- Setup View (first-time root admin creation) -->
@@ -630,6 +671,72 @@
         <div id="claudeLogDetailBody" class="card" style="margin-top:1rem"></div>
     </div>
 
+    <!-- Plans Index View -->
+    <div id="plansView" class="view" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+            <h2 style="margin:0">Plans</h2>
+            <div style="display:flex;gap:0.5rem;align-items:center">
+                <input id="plansFilter" type="text" placeholder="Filter by title or author"
+                       style="width:240px" oninput="app.filterPlans()">
+                <button class="btn btn-outline btn-sm" onclick="app.loadPlans()">Refresh</button>
+            </div>
+        </div>
+        <p style="color:var(--text-muted);font-size:0.9rem;margin-top:0.25rem">
+            Every suggestion that has a plan attached. Click a row to see the full task breakdown.
+        </p>
+        <div id="plansError" style="display:none;color:var(--danger);margin-bottom:1rem"></div>
+        <div id="plansSummary" class="card" style="margin-bottom:1rem;font-size:0.9rem"></div>
+        <div id="plansList"></div>
+    </div>
+
+    <!-- Plan Detail View -->
+    <div id="planDetailView" class="view" style="display:none">
+        <span class="back-btn" onclick="app.navigate('plans')">&larr; Back to Plans</span>
+        <div id="planDetailHeader" style="margin-top:0.5rem"></div>
+        <div id="planDetailError" style="display:none;color:var(--danger);margin:1rem 0"></div>
+        <div id="planDetailTasks" class="card"></div>
+    </div>
+
+    <!-- Tasks View (cross-plan) -->
+    <div id="tasksView" class="view" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+            <h2 style="margin:0">Tasks</h2>
+            <div style="display:flex;gap:0.5rem;align-items:center">
+                <select id="tasksStatusFilter" onchange="app.filterAllTasks()" style="width:auto">
+                    <option value="">All statuses</option>
+                    <option value="PENDING">Pending</option>
+                    <option value="IN_PROGRESS">In progress</option>
+                    <option value="REVIEWING">Reviewing</option>
+                    <option value="COMPLETED">Completed</option>
+                    <option value="FAILED">Failed</option>
+                </select>
+                <input id="tasksSearch" type="text" placeholder="Filter by title or suggestion"
+                       style="width:240px" oninput="app.filterAllTasks()">
+                <button class="btn btn-outline btn-sm" onclick="app.loadAllTasks()">Refresh</button>
+            </div>
+        </div>
+        <p style="color:var(--text-muted);font-size:0.9rem;margin-top:0.25rem">
+            Every task across every plan. Click a row to open the plan it belongs to.
+        </p>
+        <div id="tasksError" style="display:none;color:var(--danger);margin-bottom:1rem"></div>
+        <div id="tasksStats" class="card" style="margin-bottom:1rem;font-size:0.9rem"></div>
+        <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse" id="tasksTable">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Suggestion</th>
+                        <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">#</th>
+                        <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Task</th>
+                        <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Status</th>
+                        <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Started</th>
+                        <th style="text-align:left;padding:0.5rem;border-bottom:2px solid var(--border)">Duration</th>
+                    </tr>
+                </thead>
+                <tbody id="tasksBody"></tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Settings View -->
     <div id="settingsView" class="view">
         <span class="back-btn" onclick="app.navigate('list')">&larr; Back</span>
@@ -926,6 +1033,8 @@
     </div>
 
 </div>
+</main>
+</div><!-- /.app-shell -->
 
 <!-- Project Definition Modal -->
 <div id="project-def-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:300;overflow-y:auto;padding:2rem 1rem;">

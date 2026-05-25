@@ -149,6 +149,14 @@ import {
 } from './modules/spendingDashboard.js';
 
 import {
+    loadPlans,
+    loadPlanDetail,
+    loadAllTasks,
+    filterPlans,
+    filterAllTasks,
+} from './modules/plans.js';
+
+import {
     openChangePasswordModal,
     closeChangePasswordModal,
     submitChangePassword,
@@ -271,6 +279,9 @@ registerNavigationCallbacks({
     loadClaudeQueue,
     stopClaudeQueuePolling,
     loadSpendingDashboard,
+    loadPlans,
+    loadPlanDetail,
+    loadAllTasks,
     disconnectWs,
     updateSaveAsDraftBtn: () => {
         const btn = document.getElementById('saveAsDraftBtn');
@@ -419,6 +430,13 @@ window.app = {
     // spending dashboard
     loadSpendingDashboard,
 
+    // plans / tasks (cross-suggestion)
+    loadPlans,
+    loadPlanDetail,
+    loadAllTasks,
+    filterPlans,
+    filterAllTasks,
+
     // change password
     openChangePasswordModal,
     closeChangePasswordModal,
@@ -483,39 +501,34 @@ window.app = {
 
 function toggleMainMenu(event) {
     if (event) event.stopPropagation();
-    const menu = document.getElementById('mainMenu');
+    const sidebar = document.getElementById('appSidebar');
+    const backdrop = document.getElementById('sidebarBackdrop');
     const toggle = document.getElementById('menuToggle');
-    if (!menu) return;
-    const willOpen = !menu.classList.contains('open');
-    menu.classList.toggle('open', willOpen);
+    if (!sidebar) return;
+    const willOpen = !sidebar.classList.contains('open');
+    sidebar.classList.toggle('open', willOpen);
+    if (backdrop) backdrop.classList.toggle('open', willOpen);
     if (toggle) toggle.setAttribute('aria-expanded', String(willOpen));
 }
 
 function closeMainMenu() {
-    const menu = document.getElementById('mainMenu');
+    const sidebar = document.getElementById('appSidebar');
+    const backdrop = document.getElementById('sidebarBackdrop');
     const toggle = document.getElementById('menuToggle');
-    if (menu) menu.classList.remove('open');
+    if (sidebar) sidebar.classList.remove('open');
+    if (backdrop) backdrop.classList.remove('open');
     if (toggle) toggle.setAttribute('aria-expanded', 'false');
 }
 
 function _initMainMenu() {
-    const menu = document.getElementById('mainMenu');
-    const toggle = document.getElementById('menuToggle');
-    if (!menu) return;
-    // Click a menu item -> let its onclick run, then close.
-    menu.addEventListener('click', (e) => {
-        const target = e.target;
-        if (target && target.classList && target.classList.contains('menu-item')) {
-            closeMainMenu();
-        }
+    const sidebar = document.getElementById('appSidebar');
+    if (!sidebar) return;
+    // Click a sidebar nav item -> close drawer (mobile).
+    sidebar.addEventListener('click', (e) => {
+        const target = e.target.closest('.sidebar-item');
+        if (target) closeMainMenu();
     });
-    // Click anywhere outside the menu (and not on the toggle) -> close.
-    document.addEventListener('click', (e) => {
-        if (!menu.classList.contains('open')) return;
-        if (toggle && toggle.contains(e.target)) return;
-        if (!menu.contains(e.target)) closeMainMenu();
-    });
-    // Escape -> close.
+    // Escape -> close (mobile drawer).
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeMainMenu();
     });

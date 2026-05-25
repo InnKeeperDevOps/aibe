@@ -13,9 +13,35 @@ const _callbacks = {
     loadClaudeQueue: () => {},
     stopClaudeQueuePolling: () => {},
     loadSpendingDashboard: () => {},
+    loadPlans: () => {},
+    loadPlanDetail: () => {},
+    loadAllTasks: () => {},
     disconnectWs: () => {},
     updateSaveAsDraftBtn: () => {},
 };
+
+// Maps logical view name -> sidebar nav button id.
+const SIDEBAR_BTN_FOR_VIEW = {
+    list: 'listBtn',
+    plans: 'plansBtn',
+    planDetail: 'plansBtn',
+    tasks: 'tasksBtn',
+    dashboard: 'dashboardBtn',
+    claudeQueue: 'claudeQueueBtn',
+    claudeLogs: 'claudeLogsBtn',
+    claudeLogDetail: 'claudeLogsBtn',
+    spending: 'spendingBtn',
+    settings: 'settingsBtn',
+};
+
+function _markActiveSidebar(view) {
+    document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+    const id = SIDEBAR_BTN_FOR_VIEW[view];
+    if (id) {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.add('active');
+    }
+}
 
 export function registerNavigationCallbacks(cbs) {
     Object.assign(_callbacks, cbs);
@@ -50,6 +76,7 @@ export function navigate(view, data) {
         el.style.display = '';
         el.classList.add('active');
     }
+    _markActiveSidebar(view);
 
     // Disconnect existing WebSocket
     _callbacks.disconnectWs();
@@ -69,6 +96,9 @@ export function navigate(view, data) {
         case 'claudeLogDetail': _callbacks.loadClaudeLogDetail(data); break;
         case 'claudeQueue': _callbacks.loadClaudeQueue(); break;
         case 'spending': _callbacks.loadSpendingDashboard(); break;
+        case 'plans': _callbacks.loadPlans(); break;
+        case 'planDetail': _callbacks.loadPlanDetail(data); break;
+        case 'tasks': _callbacks.loadAllTasks(); break;
         case 'login': {
             const regDisabled = state.settings.registrationsEnabled === false;
             const createLink = document.getElementById('createAccountLink');

@@ -2,7 +2,7 @@ import { state } from './state.js';
 import { api } from './api.js';
 import { esc, timeAgo, formatContent } from './utils.js';
 import { renderTasks } from './tasks.js';
-import { renderExpertReview, updateExpertReview, loadReviewSummary } from './expertReview.js';
+import { renderExpertReview, updateExpertReview, loadReviewSummary, showExpertClarificationWizard } from './expertReview.js';
 import { showClarificationWizard, hideClarificationWizard, loadClarificationQuestions } from './clarification.js';
 import { loadSuggestions } from './suggestions.js';
 
@@ -213,16 +213,37 @@ export async function loadDetail(id) {
     // Render messages
     renderMessages(messages);
 
-    // Check for pending clarification questions
-    if (suggestion.status === 'DISCUSSING' && suggestion.pendingClarificationQuestions) {
+    // Recover the right clarification wizard on page load. Initial AI
+    // evaluation uses DISCUSSING + the user-facing wizard; expert plan
+    // reviews use EXPERT_REVIEW + the expert wizard (different state,
+    // different submit endpoint, different header).
+    if (suggestion.pendingClarificationQuestions) {
+        let questions = null;
         try {
-            const questions = JSON.parse(suggestion.pendingClarificationQuestions);
-            if (questions && questions.length > 0) {
-                showClarificationWizard(questions);
-            }
+            questions = JSON.parse(suggestion.pendingClarificationQuestions);
         } catch (e) {
-            // Fallback: load from API
+            // Fall through to the API fallback below.
+        }
+        if (questions && questions.length > 0) {
+            if (suggestion.status === 'EXPERT_REVIEW') {
+                // currentPhase is stored as "<Expert Name> has questions for you"
+                // — extract the name so the wizard header is accurate after a
+                // page reload.
+                let expertName = 'Expert';
+                const m = (suggestion.currentPhase || '')
+                        .match(/^(.+?) has questions for you$/);
+                if (m) expertName = m[1];
+                showExpertClarificationWizard(questions, expertName);
+            } else if (suggestion.status === 'DISCUSSING') {
+                showClarificationWizard(questions);
+            } else {
+                hideClarificationWizard();
+            }
+        } else if (questions === null) {
+            // Couldn't parse the stored payload — ask the server directly.
             loadClarificationQuestions(id);
+        } else {
+            hideClarificationWizard();
         }
     } else {
         hideClarificationWizard();

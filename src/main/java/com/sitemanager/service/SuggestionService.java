@@ -525,10 +525,15 @@ public class SuggestionService {
         claudePrompt.append("Based on these answers and the original suggestion, please evaluate again:\n");
         claudePrompt.append("1. If you still need more information, respond with NEEDS_CLARIFICATION status and a new set of questions.\n");
         claudePrompt.append("2. If you now have enough information, create a plan broken into tasks and respond with PLAN_READY status.\n\n");
-        claudePrompt.append("COMMUNICATION RULES:\n");
-        claudePrompt.append("- All messages, questions, and plan descriptions MUST be written in plain, non-technical language.\n");
-        claudePrompt.append("- NEVER mention programming languages, frameworks, libraries, databases, APIs, file names, class names, or any technical implementation details.\n");
-        claudePrompt.append("- Describe changes in terms of what the user will experience — features, behaviors, and outcomes.\n");
+        claudePrompt.append("DUAL-LEVEL DETAIL RULES:\n");
+        claudePrompt.append("- Every plan and every task has TWO layers and you MUST produce BOTH:\n");
+        claudePrompt.append("  * LOW-LEVEL (technical): for experts reviewing the implementation. " +
+                "Reference specific files, classes, methods, modules, frameworks, APIs, schemas, and concrete implementation steps. " +
+                "Be specific enough that a developer can verify the plan.\n");
+        claudePrompt.append("  * HIGH-LEVEL (display): for the end user. Plain, non-technical language describing features, behaviors, and outcomes. " +
+                "NEVER mention file names, classes, frameworks, or technical specifics in the display layer.\n");
+        claudePrompt.append("- The two layers describe the same work at different granularities — they should NOT be identical strings.\n");
+        claudePrompt.append("- The 'message' field (user-facing) and any 'questions' MUST stay plain, non-technical, like the high-level layer.\n");
         claudePrompt.append("- Questions should be about desired behavior and outcomes, not technical choices.\n\n");
         claudePrompt.append("Respond in this JSON format:\n");
         claudePrompt.append("If clarification needed:\n");
@@ -537,14 +542,21 @@ public class SuggestionService {
         claudePrompt.append("\"questions\": [\"specific question 1\", \"specific question 2\", ...]}\n\n");
         claudePrompt.append("If ready to plan:\n");
         claudePrompt.append("{\"status\": \"PLAN_READY\", ");
-        claudePrompt.append("\"message\": \"your response to the user\", ");
-        claudePrompt.append("\"plan\": \"brief overall summary of what will be done\", ");
+        claudePrompt.append("\"message\": \"your response to the user — plain language\", ");
+        claudePrompt.append("\"plan\": \"low-level technical plan summary referencing concrete files/components/approach\", ");
+        claudePrompt.append("\"planDisplaySummary\": \"high-level plain-language plan summary for the user\", ");
         claudePrompt.append("\"tasks\": [\n");
-        claudePrompt.append("  {\"title\": \"short task name\", \"description\": \"what this task involves\", \"estimatedMinutes\": number},\n");
+        claudePrompt.append("  {\"title\": \"low-level technical task name (may reference files/classes)\", ");
+        claudePrompt.append("\"description\": \"detailed technical description of the implementation\", ");
+        claudePrompt.append("\"displayTitle\": \"high-level user-facing task name in plain language\", ");
+        claudePrompt.append("\"displayDescription\": \"plain-language description of the outcome\", ");
+        claudePrompt.append("\"estimatedMinutes\": number},\n");
         claudePrompt.append("  ...\n");
         claudePrompt.append("]}\n\n");
         claudePrompt.append("IMPORTANT: When status is NEEDS_CLARIFICATION, you MUST include a \"questions\" array with each clarifying question as a separate string element.\n");
-        claudePrompt.append("When status is PLAN_READY, you MUST include a \"tasks\" array that breaks the plan into ordered steps. ");
+        claudePrompt.append("When status is PLAN_READY, you MUST include BOTH layers: plan + planDisplaySummary at the top level, ");
+        claudePrompt.append("and title + description + displayTitle + displayDescription on every task. ");
+        claudePrompt.append("The two layers should differ meaningfully — low-level has technical specifics, high-level has plain language. ");
         claudePrompt.append("Each task should be a concrete, actionable unit of work with a realistic time estimate in minutes. ");
         claudePrompt.append("Order tasks by implementation sequence. Typically 3-8 tasks is appropriate.");
 
@@ -1061,7 +1073,10 @@ public class SuggestionService {
         } catch (Exception e) {
             log.warn("Failed to extract planDisplaySummary: {}", e.getMessage());
         }
-        // Fallback: return the regular plan if no display summary
+        // Legacy fallback: when Claude only returns 'plan', mirror it into the
+        // display field so the user-facing UI has something to show. New
+        // prompts ask for both layers explicitly, so this only fires for
+        // older responses or off-prompt output.
         return extractPlan(response);
     }
 
@@ -1222,16 +1237,18 @@ public class SuggestionService {
                 "Description: " + suggestion.getDescription() + "\n" +
                 (suggestion.getPlanSummary() != null ?
                         "Current plan: " + suggestion.getPlanSummary() + "\n" : "") +
-                "\nCOMMUNICATION RULES:\n" +
-                "- All messages and questions MUST be written in plain, non-technical language.\n" +
-                "- NEVER mention programming languages, frameworks, file names, or technical details.\n" +
-                "- Describe things from the user's perspective.\n\n" +
+                "\nDUAL-LEVEL DETAIL RULES:\n" +
+                "- The 'plan' field is the LOW-LEVEL technical version for expert reviewers — may reference files, classes, frameworks, and concrete implementation steps.\n" +
+                "- The 'planDisplaySummary' field is the HIGH-LEVEL plain-language version for end users — no file names, no technical details.\n" +
+                "- The two layers should NOT be identical strings.\n" +
+                "- The 'message' field (and any 'questions') MUST stay plain, non-technical.\n\n" +
                 "Respond in JSON format:\n" +
                 "If the suggestion is NOT affected (plan is still valid):\n" +
                 "{\"status\": \"PLAN_READY\", " +
                 "\"message\": \"The recent project updates don't affect this suggestion. " +
                 "The existing plan is still good.\", " +
-                "\"plan\": \"<the existing plan, unchanged>\"}\n\n" +
+                "\"plan\": \"<the existing low-level plan, unchanged>\", " +
+                "\"planDisplaySummary\": \"<the existing high-level plain-language summary, unchanged>\"}\n\n" +
                 "If the suggestion IS affected and you need clarification:\n" +
                 "{\"status\": \"NEEDS_CLARIFICATION\", " +
                 "\"message\": \"The project has changed in ways that affect this suggestion.\", " +
@@ -1239,8 +1256,10 @@ public class SuggestionService {
                 "If the suggestion IS affected but you can update the plan:\n" +
                 "{\"status\": \"PLAN_READY\", " +
                 "\"message\": \"The plan has been updated to account for the recent project changes.\", " +
-                "\"plan\": \"<updated plan>\"}\n\n" +
-                "IMPORTANT: When status is NEEDS_CLARIFICATION, you MUST include a \"questions\" array.";
+                "\"plan\": \"<updated low-level technical plan>\", " +
+                "\"planDisplaySummary\": \"<updated high-level plain-language summary>\"}\n\n" +
+                "IMPORTANT: When status is NEEDS_CLARIFICATION, you MUST include a \"questions\" array. " +
+                "When status is PLAN_READY, you MUST include BOTH 'plan' (low-level) and 'planDisplaySummary' (high-level) — they should differ meaningfully.";
     }
 
 }

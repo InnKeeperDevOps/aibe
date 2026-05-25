@@ -7,6 +7,33 @@ let _plansCache = [];
 let _allTasksCache = [];
 let _planDetailCache = null;
 
+// These views are expert-facing — they exist to review the low-level plan,
+// so default the shared technical-detail flag on the first time the user
+// lands on one of them. The user can still flip it off.
+let _defaultedToLowLevel = false;
+function _ensureDefaultLowLevel() {
+    if (_defaultedToLowLevel) return;
+    state.showTechnicalPlan = true;
+    _defaultedToLowLevel = true;
+}
+
+// When low-level is requested, render exactly what's in the technical field
+// (no fallback to the display field). A null/empty value is shown as an
+// explicit placeholder so missing data is obvious instead of silently
+// masquerading as the high-level text.
+function pickTitle(t, lowLevel) {
+    if (lowLevel) return t.title || '[no low-level title]';
+    return t.displayTitle || t.title || '';
+}
+function pickDesc(t, lowLevel) {
+    if (lowLevel) return t.description || '';
+    return t.displayDescription || t.description || '';
+}
+function pickPlanSummary(data, lowLevel) {
+    if (lowLevel) return data.planSummary || '';
+    return data.planDisplaySummary || data.planSummary || '';
+}
+
 function fmtIso(v) {
     if (!v) return '';
     try { return new Date(v).toISOString().replace('T', ' ').replace('.000Z', 'Z'); }
@@ -76,6 +103,7 @@ function statusPill(status) {
 // ---------------------------------------------------------------------------
 
 export async function loadPlans() {
+    _ensureDefaultLowLevel();
     syncToggleCheckboxes();
     const errEl = document.getElementById('plansError');
     if (errEl) errEl.style.display = 'none';
@@ -180,6 +208,7 @@ function renderPlansList() {
 // ---------------------------------------------------------------------------
 
 export async function loadPlanDetail(suggestionId) {
+    _ensureDefaultLowLevel();
     syncToggleCheckboxes();
     const errEl = document.getElementById('planDetailError');
     const headEl = document.getElementById('planDetailHeader');
@@ -266,17 +295,24 @@ function renderPlanDetail(data) {
         }
     }
 
-    // Plan summary block: technical when low-level, friendly otherwise. Hidden if no summary at all.
+    // Plan summary block: technical when low-level, friendly otherwise. When
+    // low-level is on but planSummary is empty, show an explicit placeholder
+    // so the user can see the field is missing rather than seeing the
+    // friendly text and being confused.
     if (summaryEl) {
-        const technical = data.planSummary || data.planDisplaySummary;
-        const friendly = data.planDisplaySummary || data.planSummary;
-        const summaryText = lowLevel ? technical : friendly;
-        if (summaryText) {
+        const summaryText = pickPlanSummary(data, lowLevel);
+        const friendlyAvailable = !!data.planDisplaySummary;
+        if (summaryText || lowLevel) {
+            const placeholder = (lowLevel && !summaryText)
+                ? '[no low-level plan summary stored]'
+                + (friendlyAvailable ? ' — high-level summary is set but low-level is empty' : '')
+                : '';
+            const text = summaryText || placeholder;
             summaryEl.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem">
-                    <strong>Plan${lowLevel ? ' (technical)' : ''}</strong>
+                    <strong>${lowLevel ? 'Low-level plan (expert)' : 'Plan'}</strong>
                 </div>
-                <pre style="white-space:pre-wrap;margin-top:0.5rem;font-size:0.85rem;font-family:${lowLevel ? 'ui-monospace,SFMono-Regular,monospace' : 'inherit'}">${esc(summaryText)}</pre>`;
+                <pre style="white-space:pre-wrap;margin-top:0.5rem;font-size:0.85rem;font-family:${lowLevel ? 'ui-monospace,SFMono-Regular,monospace' : 'inherit'};${!summaryText ? 'color:var(--text-muted);font-style:italic' : ''}">${esc(text)}</pre>`;
             summaryEl.style.display = '';
         } else {
             summaryEl.style.display = 'none';
@@ -289,8 +325,10 @@ function renderPlanDetail(data) {
         return;
     }
     tasksEl.innerHTML = tasks.map(t => {
-        const title = lowLevel ? (t.title || t.displayTitle) : (t.displayTitle || t.title);
-        const desc = lowLevel ? (t.description || t.displayDescription) : (t.displayDescription || t.description);
+        const title = pickTitle(t, lowLevel);
+        const desc = pickDesc(t, lowLevel);
+        const lowLevelMissing = lowLevel && !t.title;
+        const descMissing = lowLevel && !t.description;
         let meta = '';
         if (t.estimatedMinutes) meta += `~${t.estimatedMinutes} min`;
         if (t.startedAt && !t.completedAt) {
@@ -315,11 +353,16 @@ function renderPlanDetail(data) {
                 ${t.displayDescription && t.description && t.displayDescription !== t.description ? `<div>friendly desc</div><div style="white-space:pre-wrap">${esc(t.displayDescription)}</div>` : ''}
             </div>` : '';
 
+        const titleStyle = lowLevelMissing ? 'font-weight:600;color:var(--text-muted);font-style:italic' : 'font-weight:600';
+        const descStyle = descMissing
+            ? 'margin-top:0.25rem;color:var(--text-muted);font-size:0.85rem;font-style:italic'
+            : 'margin-top:0.25rem;color:var(--text-muted);font-size:0.85rem;white-space:pre-wrap';
+        const descText = descMissing ? '[no low-level description stored]' : desc;
         return `<div class="plan-detail-task" style="padding:0.75rem 0;border-bottom:1px solid var(--border)">
             <div style="display:flex;gap:0.75rem;align-items:flex-start;justify-content:space-between">
                 <div style="min-width:0;flex:1">
-                    <div style="font-weight:600">${t.taskOrder}. ${esc(title || '(untitled task)')}</div>
-                    ${desc ? `<div style="margin-top:0.25rem;color:var(--text-muted);font-size:0.85rem;white-space:pre-wrap">${esc(desc)}</div>` : ''}
+                    <div style="${titleStyle}">${t.taskOrder}. ${esc(title || '(untitled task)')}</div>
+                    ${descText ? `<div style="${descStyle}">${esc(descText)}</div>` : ''}
                     ${t.statusDetail ? `<div style="margin-top:0.35rem;font-size:0.8rem;color:var(--text-muted)">${esc(t.statusDetail)}</div>` : ''}
                     ${t.failureReason ? `<div style="margin-top:0.35rem;font-size:0.8rem;color:${STATUS_COLORS.FAILED}">⚠ ${esc(t.failureReason)}</div>` : ''}
                     ${meta ? `<div style="margin-top:0.25rem;font-size:0.75rem;color:var(--text-muted)">${meta}</div>` : ''}
@@ -336,6 +379,7 @@ function renderPlanDetail(data) {
 // ---------------------------------------------------------------------------
 
 export async function loadAllTasks() {
+    _ensureDefaultLowLevel();
     syncToggleCheckboxes();
     const errEl = document.getElementById('tasksError');
     if (errEl) errEl.style.display = 'none';
@@ -397,7 +441,8 @@ function renderTasksTable() {
         return;
     }
     body.innerHTML = rows.map(t => {
-        const title = showTech ? (t.title || t.displayTitle) : (t.displayTitle || t.title);
+        const title = pickTitle(t, showTech);
+        const titleStyle = (showTech && !t.title) ? 'color:var(--text-muted);font-style:italic' : '';
         let dur = '';
         const ms = durationMs(t.startedAt, t.completedAt);
         if (t.startedAt && t.completedAt) {
@@ -408,7 +453,7 @@ function renderTasksTable() {
         const mainRow = `<tr class="task-row" style="cursor:pointer" onclick="app.navigate('planDetail', ${t.suggestionId})">
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.85rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.suggestionTitle || ('#' + t.suggestionId))}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.85rem;color:var(--text-muted)">${t.taskOrder}</td>
-            <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.85rem;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(title || '')}</td>
+            <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.85rem;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${titleStyle}">${esc(title || '')}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border)">${statusPill(t.status)}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.8rem;color:var(--text-muted)">${t.startedAt ? esc(timeAgo(t.startedAt)) : ''}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border);font-size:0.8rem;color:var(--text-muted)">${dur}</td>

@@ -33,9 +33,22 @@ function renderPlanText(suggestion) {
         return;
     }
     planEl.style.display = '';
-    const technical = suggestion.planSummary || suggestion.planDisplaySummary;
-    const friendly = suggestion.planDisplaySummary || suggestion.planSummary;
-    planText.textContent = state.showTechnicalPlan ? technical : friendly;
+    if (state.showTechnicalPlan) {
+        if (suggestion.planSummary) {
+            planText.textContent = suggestion.planSummary;
+            planText.style.fontStyle = '';
+            planText.style.color = '';
+        } else {
+            planText.textContent = '[no low-level plan summary stored]'
+                + (suggestion.planDisplaySummary ? ' — high-level summary is set but low-level is empty' : '');
+            planText.style.fontStyle = 'italic';
+            planText.style.color = 'var(--text-muted)';
+        }
+    } else {
+        planText.textContent = suggestion.planDisplaySummary || suggestion.planSummary || '';
+        planText.style.fontStyle = '';
+        planText.style.color = '';
+    }
 
     // Only show the toggle if there's an actual technical/friendly divergence
     // somewhere — otherwise flipping it would produce identical output.

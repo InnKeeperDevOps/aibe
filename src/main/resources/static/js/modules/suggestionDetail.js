@@ -18,6 +18,51 @@ export function registerSuggestionDetailCallbacks(cbs) {
     Object.assign(_callbacks, cbs);
 }
 
+/**
+ * Render the plan section, choosing the user-facing or technical version
+ * based on state.showTechnicalPlan. The "Show technical detail" toggle is
+ * only meaningful when the technical and display fields actually differ
+ * somewhere in the suggestion or its tasks — hidden otherwise.
+ */
+function renderPlanText(suggestion) {
+    const planEl = document.getElementById('detailPlan');
+    const planText = document.getElementById('detailPlanText');
+    if (!planEl || !planText) return;
+    if (!(suggestion.planDisplaySummary || suggestion.planSummary)) {
+        planEl.style.display = 'none';
+        return;
+    }
+    planEl.style.display = '';
+    const technical = suggestion.planSummary || suggestion.planDisplaySummary;
+    const friendly = suggestion.planDisplaySummary || suggestion.planSummary;
+    planText.textContent = state.showTechnicalPlan ? technical : friendly;
+
+    // Only show the toggle if there's an actual technical/friendly divergence
+    // somewhere — otherwise flipping it would produce identical output.
+    const tasksDiffer = (state.tasks || []).some(t =>
+        (t.title && t.displayTitle && t.title !== t.displayTitle)
+        || (t.description && t.displayDescription && t.description !== t.displayDescription));
+    const summariesDiffer = suggestion.planSummary
+            && suggestion.planDisplaySummary
+            && suggestion.planSummary !== suggestion.planDisplaySummary;
+    const toggleWrap = document.getElementById('detailPlanDetailToggleWrap');
+    if (toggleWrap) {
+        toggleWrap.style.display = (tasksDiffer || summariesDiffer) ? '' : 'none';
+    }
+    const toggleInput = document.getElementById('detailPlanDetailToggle');
+    if (toggleInput) toggleInput.checked = !!state.showTechnicalPlan;
+}
+
+/**
+ * Flip between user-facing and technical plan rendering. Wired to the
+ * "Show technical detail" checkbox above the plan card.
+ */
+export function toggleDetailedPlan(checked) {
+    state.showTechnicalPlan = !!checked;
+    if (state.currentSuggestionData) renderPlanText(state.currentSuggestionData);
+    renderTasks();
+}
+
 export async function loadDetail(id) {
     state.currentSuggestion = id;
     const suggestion = await api('/suggestions/' + id);
@@ -74,14 +119,8 @@ export async function loadDetail(id) {
         phaseEl.style.display = 'none';
     }
 
-    const planEl = document.getElementById('detailPlan');
-    const planText = document.getElementById('detailPlanText');
-    if (suggestion.planDisplaySummary || suggestion.planSummary) {
-        planEl.style.display = '';
-        planText.textContent = suggestion.planDisplaySummary || suggestion.planSummary;
-    } else {
-        planEl.style.display = 'none';
-    }
+    state.currentSuggestionData = suggestion;
+    renderPlanText(suggestion);
 
     // Queue status for APPROVED (queued) suggestions
     const queueInfoEl = document.getElementById('detailQueueInfo');

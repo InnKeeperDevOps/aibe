@@ -104,6 +104,30 @@ public class AuthService {
         return saved;
     }
 
+    /**
+     * Change the password for the currently-logged-in user. The caller proves
+     * they know the existing password (so a stolen session can't lock out the
+     * legitimate owner) and the new password is bcrypt-hashed with the same
+     * encoder the login flow uses.
+     *
+     * @throws ResponseStatusException 401 if {@code currentPassword} doesn't match
+     * @throws ResponseStatusException 404 if the username has no row (session
+     *         outlived the user being deleted)
+     */
+    public void changePassword(String username, String currentPassword, String newPassword) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Current password is incorrect");
+        }
+        if (passwordEncoder.matches(newPassword, user.getPasswordHash())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "New password must be different from the current password");
+        }
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+    }
+
     public User createAdmin(String username, String password) {
         if (userRepository.findByUsername(username).isPresent()) {
             throw new IllegalArgumentException("Username already taken");

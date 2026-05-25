@@ -51,6 +51,7 @@ import {
     retryFromLast,
     restartPlan,
     forceReApproval,
+    toggleDetailedPlan,
     vote,
 } from './modules/suggestionDetail.js';
 
@@ -146,6 +147,12 @@ import {
 import {
     loadSpendingDashboard,
 } from './modules/spendingDashboard.js';
+
+import {
+    openChangePasswordModal,
+    closeChangePasswordModal,
+    submitChangePassword,
+} from './modules/changePassword.js';
 
 import {
     loadSettings,
@@ -322,6 +329,7 @@ window.app = {
     retryFromLast,
     restartPlan,
     forceReApproval,
+    toggleDetailedPlan,
     vote,
 
     // tasks
@@ -410,6 +418,11 @@ window.app = {
 
     // spending dashboard
     loadSpendingDashboard,
+
+    // change password
+    openChangePasswordModal,
+    closeChangePasswordModal,
+    submitChangePassword,
 
     // settings / admin
     loadSettings,

@@ -1,6 +1,7 @@
 package com.sitemanager.controller;
 
 import com.sitemanager.dto.AuthStatusResponse;
+import com.sitemanager.dto.ChangePasswordRequest;
 import com.sitemanager.dto.LoginRequest;
 import com.sitemanager.dto.RegisterRequest;
 import com.sitemanager.dto.SetupRequest;
@@ -95,6 +96,21 @@ public class AuthController {
     public ResponseEntity<?> logout(HttpSession session) {
         session.invalidate();
         return ResponseEntity.ok(Map.of("message", "Logged out"));
+    }
+
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(@Valid @RequestBody ChangePasswordRequest request,
+                                            HttpSession session) {
+        String currentUser = (String) session.getAttribute("username");
+        if (currentUser == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "You must be logged in to change your password"));
+        }
+        try {
+            authService.changePassword(currentUser, request.getCurrentPassword(), request.getNewPassword());
+            return ResponseEntity.ok(Map.of("message", "Password changed successfully"));
+        } catch (ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        }
     }
 
     @PostMapping("/create-admin")

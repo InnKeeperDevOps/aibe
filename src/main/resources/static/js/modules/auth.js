@@ -39,6 +39,7 @@ export function updateHeader() {
     const claudeLogsBtn = document.getElementById('claudeLogsBtn');
     const claudeQueueBtn = document.getElementById('claudeQueueBtn');
     const spendingBtn = document.getElementById('spendingBtn');
+    const changePasswordBtn = document.getElementById('changePasswordBtn');
 
     if (loggedIn) {
         badge.textContent = username + ' (' + role + ')';
@@ -50,6 +51,8 @@ export function updateHeader() {
         if (claudeLogsBtn) claudeLogsBtn.style.display = isAdmin ? '' : 'none';
         if (claudeQueueBtn) claudeQueueBtn.style.display = isAdmin ? '' : 'none';
         if (spendingBtn) spendingBtn.style.display = isAdmin ? '' : 'none';
+        // Change password is available to every logged-in user, not just admins.
+        if (changePasswordBtn) changePasswordBtn.style.display = '';
     } else {
         badge.style.display = 'none';
         loginBtn.style.display = '';
@@ -58,6 +61,7 @@ export function updateHeader() {
         if (claudeLogsBtn) claudeLogsBtn.style.display = 'none';
         if (claudeQueueBtn) claudeQueueBtn.style.display = 'none';
         if (spendingBtn) spendingBtn.style.display = 'none';
+        if (changePasswordBtn) changePasswordBtn.style.display = 'none';
     }
     updateNewSuggestionBtn();
     updateAiRecommendationsBtn();

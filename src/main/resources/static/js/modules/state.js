@@ -20,6 +20,11 @@ export const state = {
     },
     tasks: [],
     taskTimer: null,
+    // When true, the plan text + task list show the technical fields
+    // (planSummary, task.title/description) instead of the user-facing
+    // display fields. Toggled from the suggestion detail page.
+    showTechnicalPlan: false,
+    currentSuggestionData: null,
     expertReview: {
         currentStep: -1,
         totalSteps: 0,

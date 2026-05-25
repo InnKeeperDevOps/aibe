@@ -50,8 +50,13 @@ export function renderTasks() {
         return `<div class="task-item ${isActive ? 'task-active' : ''}" data-task-order="${t.taskOrder}">
             <div class="task-icon ${statusClass}">${icon}</div>
             <div class="task-body">
-                <div class="${titleClass}">${t.taskOrder}. ${esc(t.displayTitle || t.title)}${statusLabel ? `<span style="font-weight:400;font-size:0.8rem;color:${t.status === 'REVIEWING' ? '#d97706' : '#2563eb'}">${statusLabel}</span>` : ''}</div>
-                ${(t.displayDescription || t.description) ? `<div class="task-desc">${esc(t.displayDescription || t.description)}</div>` : ''}
+                <div class="${titleClass}">${t.taskOrder}. ${esc(state.showTechnicalPlan ? (t.title || t.displayTitle) : (t.displayTitle || t.title))}${statusLabel ? `<span style="font-weight:400;font-size:0.8rem;color:${t.status === 'REVIEWING' ? '#d97706' : '#2563eb'}">${statusLabel}</span>` : ''}</div>
+                ${(() => {
+                    const desc = state.showTechnicalPlan
+                        ? (t.description || t.displayDescription)
+                        : (t.displayDescription || t.description);
+                    return desc ? `<div class="task-desc">${esc(desc)}</div>` : '';
+                })()}
                 ${isActive && activityDetail ? `<div class="task-activity"><span class="task-activity-dot"></span>${activityDetail}</div>` : ''}
                 ${(!isActive && t.status === 'COMPLETED' && activityDetail) ? `<div class="task-completed-detail">${activityDetail}</div>` : ''}
                 ${(!isActive && t.status === 'FAILED' && activityDetail) ? `<div class="task-failed-detail">${activityDetail}</div>` : ''}

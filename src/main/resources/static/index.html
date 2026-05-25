@@ -497,6 +497,8 @@
                     color:var(--text-muted);font-size:0.85rem"></div>
 
             <div id="adminActions" class="admin-actions" style="display:none">
+                <button class="btn btn-success btn-sm" id="approvePlanBtn" style="display:none"
+                        onclick="app.approvePlan()" title="Send the plan to expert review. Tasks will be generated after experts converge.">Approve plan → start expert review</button>
                 <button class="btn btn-success btn-sm" onclick="app.approve()">Approve</button>
                 <button class="btn btn-danger btn-sm" onclick="app.deny()">Deny</button>
                 <button class="btn btn-sm" id="forceReApprovalBtn"

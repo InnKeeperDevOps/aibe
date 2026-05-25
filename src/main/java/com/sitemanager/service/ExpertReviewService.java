@@ -72,6 +72,7 @@ public class ExpertReviewService {
     private final CostRollupService costRollupService;
     private final SpendingLimitService spendingLimitService;
     private final SpendingAlertService spendingAlertService;
+    private final PlanExecutionService planExecutionService;
 
     public ExpertReviewService(SuggestionRepository suggestionRepository,
                                SuggestionMessageRepository messageRepository,
@@ -85,7 +86,8 @@ public class ExpertReviewService {
                                ExpertReviewCostRepository costRepository,
                                CostRollupService costRollupService,
                                SpendingLimitService spendingLimitService,
-                               SpendingAlertService spendingAlertService) {
+                               SpendingAlertService spendingAlertService,
+                               PlanExecutionService planExecutionService) {
         this.suggestionRepository = suggestionRepository;
         this.messageRepository = messageRepository;
         this.planTaskRepository = planTaskRepository;
@@ -99,6 +101,7 @@ public class ExpertReviewService {
         this.costRollupService = costRollupService;
         this.spendingLimitService = spendingLimitService;
         this.spendingAlertService = spendingAlertService;
+        this.planExecutionService = planExecutionService;
     }
 
     /**
@@ -564,17 +567,7 @@ public class ExpertReviewService {
                 addMessage(suggestionId, SenderType.SYSTEM, "System",
                         "Thank you for the guidance. The plan has been through extensive review (" +
                         totalRounds + " total rounds) and will be finalized as-is.");
-
-                suggestion.setStatus(SuggestionStatus.PLANNED);
-                suggestion.setExpertReviewStep(null);
-                suggestion.setExpertReviewRound(null);
-                suggestion.setExpertReviewPlanChanged(null);
-                suggestion.setTotalExpertReviewRounds(null);
-                suggestion.setCurrentPhase("Plan ready — waiting for approval");
-                suggestionRepository.save(suggestion);
-                broadcastUpdate(suggestion);
-                broadcastExpertReviewStatus(suggestionId);
-                notifyAdminsApprovalNeeded(suggestion);
+                finalizeExpertReviewAndGenerateTasks(suggestion);
                 return;
             }
 
@@ -592,18 +585,8 @@ public class ExpertReviewService {
                 log.info("Suggestion {} — all experts already approved, skipping re-review after user guidance",
                         suggestionId);
                 addMessage(suggestionId, SenderType.SYSTEM, "System",
-                        "All experts have already approved the plan. Proceeding to final approval.");
-                suggestion.setStatus(SuggestionStatus.PLANNED);
-                suggestion.setExpertReviewStep(null);
-                suggestion.setExpertReviewRound(null);
-                suggestion.setExpertReviewPlanChanged(null);
-                suggestion.setTotalExpertReviewRounds(null);
-                suggestion.setExpertReviewChangedDomains(null);
-                suggestion.setCurrentPhase("Plan ready — waiting for approval");
-                suggestionRepository.save(suggestion);
-                broadcastUpdate(suggestion);
-                broadcastExpertReviewStatus(suggestionId);
-                notifyAdminsApprovalNeeded(suggestion);
+                        "All experts have already approved the plan. Proceeding to task generation.");
+                finalizeExpertReviewAndGenerateTasks(suggestion);
                 return;
             }
 
@@ -714,18 +697,8 @@ public class ExpertReviewService {
                     log.info("Suggestion {} — all affected reviewers already approved, skipping re-review round",
                             suggestionId);
                     addMessage(suggestionId, SenderType.SYSTEM, "System",
-                            "All affected reviewers already approved — proceeding to final approval.");
-                    suggestion.setStatus(SuggestionStatus.PLANNED);
-                    suggestion.setExpertReviewStep(null);
-                    suggestion.setExpertReviewRound(null);
-                    suggestion.setExpertReviewPlanChanged(null);
-                    suggestion.setTotalExpertReviewRounds(null);
-                    suggestion.setExpertReviewChangedDomains(null);
-                    suggestion.setCurrentPhase("Plan ready — waiting for approval");
-                    suggestionRepository.save(suggestion);
-                    broadcastUpdate(suggestion);
-                    broadcastExpertReviewStatus(suggestionId);
-                    notifyAdminsApprovalNeeded(suggestion);
+                            "All affected reviewers already approved — proceeding to task generation.");
+                    finalizeExpertReviewAndGenerateTasks(suggestion);
                     return;
                 }
 
@@ -764,19 +737,9 @@ public class ExpertReviewService {
             }
 
             addMessage(suggestionId, SenderType.SYSTEM, "System",
-                    "All expert reviews are complete. The plan is ready for approval.");
+                    "All expert reviews are complete. Generating the task list from the approved plan.");
 
-            suggestion.setStatus(SuggestionStatus.PLANNED);
-            suggestion.setExpertReviewStep(null);
-            suggestion.setExpertReviewRound(null);
-            suggestion.setExpertReviewPlanChanged(null);
-            suggestion.setTotalExpertReviewRounds(null);
-            suggestion.setExpertReviewChangedDomains(null);
-            suggestion.setCurrentPhase("Plan ready — waiting for approval");
-            suggestionRepository.save(suggestion);
-            broadcastUpdate(suggestion);
-            broadcastExpertReviewStatus(suggestionId);
-            notifyAdminsApprovalNeeded(suggestion);
+            finalizeExpertReviewAndGenerateTasks(suggestion);
             return;
         }
 
@@ -1259,6 +1222,86 @@ public class ExpertReviewService {
         }
     }
 
+    /**
+     * Expert review has converged. Transition the suggestion to
+     * GENERATING_TASKS and ask the main AI model to turn the now-final plan
+     * into an actionable task list. On success the suggestion lands at
+     * PLANNED and admins are notified for final approval. On failure the
+     * suggestion stays at GENERATING_TASKS with a failure phase so an admin
+     * can retry.
+     */
+    private void finalizeExpertReviewAndGenerateTasks(Suggestion suggestion) {
+        Long suggestionId = suggestion.getId();
+        suggestion.setStatus(SuggestionStatus.GENERATING_TASKS);
+        suggestion.setExpertReviewStep(null);
+        suggestion.setExpertReviewRound(null);
+        suggestion.setExpertReviewPlanChanged(null);
+        suggestion.setTotalExpertReviewRounds(null);
+        suggestion.setExpertReviewChangedDomains(null);
+        suggestion.setCurrentPhase("Generating tasks from the approved plan...");
+        suggestionRepository.save(suggestion);
+        broadcastUpdate(suggestion);
+        broadcastExpertReviewStatus(suggestionId);
+
+        // Main AI model generates the task list. resolveModel() inside
+        // generateTasksFromPlan ensures the expert model is never used here.
+        claudeService.generateTasksFromPlan(
+                suggestion.getTitle(),
+                suggestion.getDescription(),
+                suggestion.getPlanSummary(),
+                suggestion.getPlanDisplaySummary(),
+                claudeService.getMainRepoDir(),
+                progress -> messagingHelper.broadcastProgress(suggestionId, progress)
+        ).thenAccept(response -> {
+            try {
+                planExecutionService.savePlanTasks(suggestionId, response);
+                Suggestion fresh = suggestionRepository.findById(suggestionId).orElse(null);
+                if (fresh == null) return;
+                long taskCount = planTaskRepository.findBySuggestionIdOrderByTaskOrder(suggestionId).size();
+                if (taskCount == 0) {
+                    log.warn("Task generation returned no tasks for suggestion {} — leaving in GENERATING_TASKS for retry",
+                            suggestionId);
+                    fresh.setCurrentPhase("Task generation failed — no tasks were produced. Retry available.");
+                    fresh.setFailureReason("AI model produced no tasks from the approved plan");
+                    suggestionRepository.save(fresh);
+                    broadcastUpdate(fresh);
+                    addMessage(suggestionId, SenderType.SYSTEM, "System",
+                            "Task generation produced no tasks. An admin can retry.");
+                    return;
+                }
+                fresh.setStatus(SuggestionStatus.PLANNED);
+                fresh.setCurrentPhase("Plan ready — waiting for approval");
+                fresh.setFailureReason(null);
+                suggestionRepository.save(fresh);
+                broadcastUpdate(fresh);
+                addMessage(suggestionId, SenderType.SYSTEM, "System",
+                        "Tasks generated from the approved plan. The plan is ready for final approval.");
+                notifyAdminsApprovalNeeded(fresh);
+            } catch (Exception e) {
+                log.error("Failed to apply generated tasks for suggestion {}", suggestionId, e);
+                Suggestion fresh = suggestionRepository.findById(suggestionId).orElse(null);
+                if (fresh != null) {
+                    fresh.setCurrentPhase("Task generation failed: " + e.getMessage());
+                    fresh.setFailureReason(e.getMessage());
+                    suggestionRepository.save(fresh);
+                    broadcastUpdate(fresh);
+                }
+            }
+        }).exceptionally(ex -> {
+            log.error("Claude task-generation call failed for suggestion {}", suggestionId, ex);
+            Suggestion fresh = suggestionRepository.findById(suggestionId).orElse(null);
+            if (fresh != null) {
+                fresh.setCurrentPhase("Task generation failed: " + ex.getMessage());
+                fresh.setFailureReason(ex.getMessage());
+                suggestionRepository.save(fresh);
+                broadcastUpdate(fresh);
+                addMessage(suggestionId, SenderType.SYSTEM, "System",
+                        "Task generation failed: " + ex.getMessage() + ". An admin can retry.");
+            }
+            return null;
+        });
+    }
+
     // -------------------------------------------------------------------------
     // Private utility helpers (copied from SuggestionService)
     // -------------------------------------------------------------------------
@@ -1268,6 +1311,15 @@ public class ExpertReviewService {
         if (suggestion != null && isPlanLocked(suggestion.getStatus())) {
             log.warn("Blocking plan task changes for suggestion {} — plan is locked in {} state",
                     suggestionId, suggestion.getStatus());
+            return;
+        }
+        // Experts can no longer create or revise tasks during EXPERT_REVIEW —
+        // tasks are generated from the final plan by the main AI model after
+        // expert review converges. If a prompt drift makes Claude emit
+        // revisedTasks anyway, drop them on the floor here.
+        if (suggestion != null && suggestion.getStatus() == SuggestionStatus.EXPERT_REVIEW) {
+            log.info("Ignoring revisedTasks from expert review for suggestion {} — tasks are generated post-review",
+                    suggestionId);
             return;
         }
         planTaskRepository.deleteBySuggestionId(suggestionId);

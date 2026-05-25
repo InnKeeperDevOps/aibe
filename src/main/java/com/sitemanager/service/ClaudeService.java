@@ -959,6 +959,61 @@ public class ClaudeService {
         return sendToClaudeAsync(userMessage, sessionId, workingDir, conversationContext, progressCallback, "continue", resolveModel(), 0);
     }
 
+    /**
+     * Generate the implementation task list from a fully-reviewed plan. Runs
+     * AFTER every expert review has converged so the experts only ever see
+     * the plan (never tasks). Uses the main AI model (resolveModel) — never
+     * the expert model — because task generation is creative work, not
+     * review. Caller is expected to feed the response to
+     * {@code PlanExecutionService.savePlanTasks}.
+     */
+    public CompletableFuture<String> generateTasksFromPlan(String suggestionTitle,
+                                                            String suggestionDescription,
+                                                            String planSummary,
+                                                            String planDisplaySummary,
+                                                            String workingDir,
+                                                            Consumer<String> progressCallback) {
+        String prompt = prependManagedFoldersScope(String.format(
+                "The implementation plan below has already been generated and approved by every expert " +
+                "reviewer. Your only job is to break the plan into an ordered list of concrete, actionable " +
+                "implementation tasks.\n\n" +
+                "Suggestion Title: %s\n" +
+                "Suggestion Description: %s\n\n" +
+                "Approved low-level plan:\n%s\n\n" +
+                "Approved high-level summary:\n%s\n\n" +
+                "TASK GENERATION RULES:\n" +
+                "- Cover ALL work needed to implement the plan end-to-end — nothing more, nothing less.\n" +
+                "- Each task must be a concrete, actionable unit of work.\n" +
+                "- Order tasks by implementation sequence (dependencies first).\n" +
+                "- Provide a realistic time estimate in minutes for each task.\n" +
+                "- Typically 3-10 tasks; use more only if the plan genuinely needs them.\n\n" +
+                "DUAL-LEVEL DETAIL RULES:\n" +
+                "- Every task has TWO layers and you MUST emit BOTH:\n" +
+                "  * LOW-LEVEL ('title' / 'description'): technical detail for an expert reviewer or executor. " +
+                "Reference specific files, classes, methods, modules, frameworks, APIs, or schemas where relevant.\n" +
+                "  * HIGH-LEVEL ('displayTitle' / 'displayDescription'): plain non-technical language for the user. " +
+                "Describe the outcome or feature change, never file/class/framework names.\n" +
+                "- The two layers must differ meaningfully — do not copy the same text into both.\n\n" +
+                "Respond with exactly this JSON shape — no preamble, no explanation outside the JSON:\n" +
+                "{\"status\": \"TASKS_READY\", " +
+                "\"message\": \"brief plain-language summary of the task list for the user\", " +
+                "\"tasks\": [\n" +
+                "  {\"title\": \"low-level technical task name\", " +
+                "\"description\": \"detailed technical description of the work\", " +
+                "\"displayTitle\": \"high-level user-facing task name in plain language\", " +
+                "\"displayDescription\": \"plain-language description of the outcome\", " +
+                "\"estimatedMinutes\": number},\n" +
+                "  ...\n" +
+                "]}",
+                suggestionTitle == null ? "" : suggestionTitle,
+                suggestionDescription == null ? "" : suggestionDescription,
+                planSummary == null ? "" : planSummary,
+                planDisplaySummary == null ? "" : planDisplaySummary));
+
+        return sendToClaudeAsync(prompt, null, workingDir, null, progressCallback,
+                "generate-tasks", resolveModel(), 0);
+    }
+
     public CompletableFuture<String> executePlan(String sessionId, String plan, String tasksJson,
                                                   String workingDir,
                                                   Consumer<String> progressCallback) {
@@ -1144,31 +1199,25 @@ public class ClaudeService {
                 "- Your 'analysis' field may reference technical details about what is present or missing in the plan.\n" +
                 "- Your 'message' field MUST be written in plain, non-technical language — describe features and behaviors only. " +
                 "NEVER mention file names, classes, APIs, or technical implementation details in the message.\n\n" +
-                "LOCKED TASK INDICES:\n" +
-                "- In your response, include 'lockedTaskIndices': a list of 0-based indices of tasks you consider essential " +
-                "to fulfilling the original request.\n" +
-                "- These tasks will be protected from removal or scope changes by downstream reviewers.\n" +
-                "- Include ALL tasks that directly implement what the user requested. " +
-                "Only exclude tasks that are clearly optional or purely technical improvements.\n" +
-                "- lockedTaskIndices is REQUIRED in all responses (use an empty list [] if no tasks exist yet).\n\n" +
+                "PLAN-ONLY REVIEW:\n" +
+                "- At this stage you are reviewing the PLAN ONLY. Tasks have NOT been created yet — they will be " +
+                "generated later by the main AI model from the final approved plan.\n" +
+                "- Do NOT include any 'revisedTasks' or 'lockedTaskIndices' fields — they will be ignored.\n" +
+                "- If the plan is missing essential work, demand it be added to the plan text via revisedPlan.\n\n" +
                 "Respond in this JSON format:\n" +
                 "If the plan fully and faithfully captures the original suggestion:\n" +
                 "{\"status\": \"APPROVED\", \"analysis\": \"what you verified and found to be complete\", " +
-                "\"message\": \"concise NON-TECHNICAL summary for the user\", " +
-                "\"lockedTaskIndices\": [0, 1, 2, ...]}\n\n" +
+                "\"message\": \"concise NON-TECHNICAL summary for the user\"}\n\n" +
                 "If the plan is missing content, reduces scope, or misrepresents the original request:\n" +
                 "{\"status\": \"CHANGES_PROPOSED\", \"analysis\": \"what is missing or incorrect\", " +
                 "\"proposedChanges\": \"technical description of what needs to be added or changed\", " +
-                "\"revisedPlan\": \"updated low-level technical plan\", " +
+                "\"revisedPlan\": \"updated low-level technical plan — must contain ALL work needed to implement the suggestion end-to-end\", " +
                 "\"revisedPlanDisplaySummary\": \"updated high-level non-technical summary for the user\", " +
-                "\"revisedTasks\": [{\"title\": \"low-level technical task name\", \"description\": \"detailed technical description\", " +
-                "\"displayTitle\": \"high-level user-facing task name\", \"displayDescription\": \"plain language description\", " +
-                "\"estimatedMinutes\": number}, ...], " +
-                "\"message\": \"concise NON-TECHNICAL summary for the user\", " +
-                "\"lockedTaskIndices\": [0, 1, 2, ...]}\n\n" +
-                "IMPORTANT: lockedTaskIndices is REQUIRED in every response. " +
-                "List every 0-based task index that is essential to fulfilling the user's original request. " +
-                "When proposing changes, include the COMPLETE revised task list, not just modified tasks.",
+                "\"message\": \"concise NON-TECHNICAL summary for the user\"}\n\n" +
+                "IMPORTANT: At this stage you are reviewing the PLAN ONLY. Tasks have NOT been created yet and you MUST NOT " +
+                "propose any task list. Tasks will be generated later from the final approved plan by the main AI model. " +
+                "Do not include a 'revisedTasks' or 'lockedTaskIndices' field — they will be ignored. " +
+                "When proposing changes, the revisedPlan must be the COMPLETE updated plan covering every aspect of implementation.",
                 expertPrompt,
                 suggestionTitle,
                 suggestionDescription,
@@ -1248,18 +1297,17 @@ public class ClaudeService {
                 "If you find CRITICAL or MAJOR issues that must be fixed:\n" +
                 "{\"status\": \"CHANGES_PROPOSED\", \"analysis\": \"your technical analysis of the issues found\", " +
                 "\"proposedChanges\": \"technical description of what should change\", " +
-                "\"revisedPlan\": \"updated low-level technical plan\", " +
+                "\"revisedPlan\": \"updated low-level technical plan — must contain ALL work needed to implement the suggestion end-to-end\", " +
                 "\"revisedPlanDisplaySummary\": \"updated high-level non-technical summary for the user\", " +
-                "\"revisedTasks\": [{\"title\": \"low-level technical task name\", \"description\": \"detailed technical description\", " +
-                "\"displayTitle\": \"high-level user-facing task name\", \"displayDescription\": \"plain language description\", " +
-                "\"estimatedMinutes\": number}, ...], " +
                 "\"message\": \"concise NON-TECHNICAL summary for the user\"}\n\n" +
                 "If you need the user to answer questions before you can complete your review:\n" +
                 "{\"status\": \"NEEDS_CLARIFICATION\", \"analysis\": \"what you've found so far\", " +
                 "\"questions\": [\"high-level non-technical question 1\", \"high-level non-technical question 2\"], " +
                 "\"message\": \"brief summary of what you need to know\"}\n\n" +
-                "IMPORTANT: When proposing changes, you MUST include revisedTasks with the COMPLETE task list (not just changed tasks). " +
-                "Each task MUST have both low-level (title/description) and high-level (displayTitle/displayDescription) fields. " +
+                "IMPORTANT: At this stage you are reviewing the PLAN ONLY. Tasks have NOT been created yet and you MUST NOT " +
+                "propose any task list. Tasks will be generated later from the final approved plan by the main AI model. " +
+                "Do not include a 'revisedTasks' field — it will be ignored. " +
+                "When proposing changes, revisedPlan must be the COMPLETE updated plan covering every aspect of implementation. " +
                 "When asking questions, keep them high-level and non-technical. " +
                 "Only propose CHANGES_PROPOSED for critical or major issues — approve with notes for medium issues.",
                 expertPrompt,

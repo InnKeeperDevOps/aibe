@@ -217,10 +217,13 @@ export async function loadDetail(id) {
     // Admin actions
     const canApprove = ['PLANNED', 'DISCUSSING'].includes(suggestion.status);
     const canForceReApproval = ['PLANNED', 'APPROVED'].includes(suggestion.status);
+    const canApprovePlan = isAdmin && suggestion.status === 'PLAN_PROPOSED';
     document.getElementById('adminActions').style.display =
-        (isAdmin && (canApprove || canForceReApproval)) ? '' : 'none';
+        (isAdmin && (canApprove || canForceReApproval || canApprovePlan)) ? '' : 'none';
     document.getElementById('forceReApprovalBtn').style.display =
         (isAdmin && canForceReApproval) ? '' : 'none';
+    const approvePlanBtn = document.getElementById('approvePlanBtn');
+    if (approvePlanBtn) approvePlanBtn.style.display = canApprovePlan ? '' : 'none';
 
     // Retry PR action
     const canRetryPr = isAdmin && suggestion.currentPhase === 'Done — review request failed';
@@ -458,6 +461,28 @@ export async function restartPlan() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Restart Plan (fresh repo)';
+    }
+}
+
+export async function approvePlan() {
+    if (!confirm('Send this plan to expert review? Tasks will be generated automatically by the main AI model after every expert review converges. The plan can still be revised by experts during review.')) return;
+    const btn = document.getElementById('approvePlanBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Starting expert review...';
+    }
+    try {
+        const result = await api('/suggestions/' + state.currentSuggestion + '/approve-plan', { method: 'POST' });
+        if (result && result.error) {
+            alert('Approve plan failed: ' + result.error);
+        }
+    } catch (e) {
+        alert('Approve plan failed: ' + e.message);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Approve plan → start expert review';
+        }
     }
 }
 

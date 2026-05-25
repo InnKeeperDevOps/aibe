@@ -451,22 +451,15 @@ public class SuggestionService {
             suggestion.setPlanSummary(extractPlan(response));
             suggestion.setPlanDisplaySummary(extractPlanDisplaySummary(response));
             suggestion.setPendingClarificationQuestions(null);
-            // Parse and save structured tasks
-            planExecutionService.savePlanTasks(suggestionId, response);
 
-            // Start expert review pipeline instead of going directly to PLANNED
-            suggestion.setStatus(SuggestionStatus.EXPERT_REVIEW);
-            suggestion.setExpertReviewStep(0);
-            suggestion.setExpertReviewRound(1);
-            suggestion.setTotalExpertReviewRounds(1);
-            suggestion.setExpertReviewNotes(null);
-            suggestion.setExpertReviewPlanChanged(false);
-            suggestion.setCurrentPhase("Plan created — starting expert reviews...");
+            // Plan is proposed but not yet approved. An admin must click
+            // "Approve plan" before expert review starts. Tasks are NOT
+            // generated here — they're produced from the final approved plan
+            // after all expert reviews converge.
+            suggestion.setStatus(SuggestionStatus.PLAN_PROPOSED);
+            suggestion.setCurrentPhase("Plan proposed — waiting for admin approval to start expert review");
             suggestionRepository.save(suggestion);
             messagingHelper.broadcastUpdate(suggestion);
-
-            // Kick off the first expert review asynchronously
-            expertReviewService.startExpertReviewPipeline(suggestionId);
             return;
         } else if (response.contains("NEEDS_CLARIFICATION")) {
             // Do NOT post clarification questions to the user discussion;
@@ -524,14 +517,20 @@ public class SuggestionService {
         }
         claudePrompt.append("Based on these answers and the original suggestion, please evaluate again:\n");
         claudePrompt.append("1. If you still need more information, respond with NEEDS_CLARIFICATION status and a new set of questions.\n");
-        claudePrompt.append("2. If you now have enough information, create a plan broken into tasks and respond with PLAN_READY status.\n\n");
+        claudePrompt.append("2. If you now have enough information, create a COMPLETE implementation plan and respond with PLAN_READY status.\n\n");
+        claudePrompt.append("PLAN COMPLETENESS RULES:\n");
+        claudePrompt.append("- The plan MUST contain ALL work needed to implement the suggestion end-to-end. " +
+                "Cover backend, frontend, data model, migrations, tests, configuration, and any user-visible changes. " +
+                "Do not leave gaps that would need to be filled in later.\n");
+        claudePrompt.append("- DO NOT produce a tasks list at this stage. Tasks will be generated AFTER the plan has been " +
+                "reviewed and approved. Focus entirely on the plan text.\n\n");
         claudePrompt.append("DUAL-LEVEL DETAIL RULES:\n");
-        claudePrompt.append("- Every plan and every task has TWO layers and you MUST produce BOTH:\n");
-        claudePrompt.append("  * LOW-LEVEL (technical): for experts reviewing the implementation. " +
+        claudePrompt.append("- The plan has TWO layers and you MUST produce BOTH:\n");
+        claudePrompt.append("  * LOW-LEVEL (technical, field name 'plan'): for experts reviewing the implementation. " +
                 "Reference specific files, classes, methods, modules, frameworks, APIs, schemas, and concrete implementation steps. " +
-                "Be specific enough that a developer can verify the plan.\n");
-        claudePrompt.append("  * HIGH-LEVEL (display): for the end user. Plain, non-technical language describing features, behaviors, and outcomes. " +
-                "NEVER mention file names, classes, frameworks, or technical specifics in the display layer.\n");
+                "Be specific enough that a developer can verify the plan and so a downstream task generator can break it into actionable steps.\n");
+        claudePrompt.append("  * HIGH-LEVEL (display, field name 'planDisplaySummary'): for the end user. Plain, non-technical language " +
+                "describing features, behaviors, and outcomes. NEVER mention file names, classes, frameworks, or technical specifics in the display layer.\n");
         claudePrompt.append("- The two layers describe the same work at different granularities — they should NOT be identical strings.\n");
         claudePrompt.append("- The 'message' field (user-facing) and any 'questions' MUST stay plain, non-technical, like the high-level layer.\n");
         claudePrompt.append("- Questions should be about desired behavior and outcomes, not technical choices.\n\n");
@@ -543,22 +542,12 @@ public class SuggestionService {
         claudePrompt.append("If ready to plan:\n");
         claudePrompt.append("{\"status\": \"PLAN_READY\", ");
         claudePrompt.append("\"message\": \"your response to the user — plain language\", ");
-        claudePrompt.append("\"plan\": \"low-level technical plan summary referencing concrete files/components/approach\", ");
-        claudePrompt.append("\"planDisplaySummary\": \"high-level plain-language plan summary for the user\", ");
-        claudePrompt.append("\"tasks\": [\n");
-        claudePrompt.append("  {\"title\": \"low-level technical task name (may reference files/classes)\", ");
-        claudePrompt.append("\"description\": \"detailed technical description of the implementation\", ");
-        claudePrompt.append("\"displayTitle\": \"high-level user-facing task name in plain language\", ");
-        claudePrompt.append("\"displayDescription\": \"plain-language description of the outcome\", ");
-        claudePrompt.append("\"estimatedMinutes\": number},\n");
-        claudePrompt.append("  ...\n");
-        claudePrompt.append("]}\n\n");
+        claudePrompt.append("\"plan\": \"COMPLETE low-level technical implementation plan referencing concrete files/components/approach — covers all work end-to-end\", ");
+        claudePrompt.append("\"planDisplaySummary\": \"high-level plain-language plan summary for the user\"}\n\n");
         claudePrompt.append("IMPORTANT: When status is NEEDS_CLARIFICATION, you MUST include a \"questions\" array with each clarifying question as a separate string element.\n");
-        claudePrompt.append("When status is PLAN_READY, you MUST include BOTH layers: plan + planDisplaySummary at the top level, ");
-        claudePrompt.append("and title + description + displayTitle + displayDescription on every task. ");
-        claudePrompt.append("The two layers should differ meaningfully — low-level has technical specifics, high-level has plain language. ");
-        claudePrompt.append("Each task should be a concrete, actionable unit of work with a realistic time estimate in minutes. ");
-        claudePrompt.append("Order tasks by implementation sequence. Typically 3-8 tasks is appropriate.");
+        claudePrompt.append("When status is PLAN_READY, you MUST include BOTH layers: 'plan' (low-level) and 'planDisplaySummary' (high-level). ");
+        claudePrompt.append("DO NOT include a 'tasks' array — tasks are generated later from the approved plan, not here. ");
+        claudePrompt.append("The two layers should differ meaningfully — low-level has technical specifics, high-level has plain language.");
 
         // Continue the Claude conversation
         suggestion.setCurrentPhase("Reviewing your answers...");
@@ -797,6 +786,45 @@ public class SuggestionService {
                         + "repository (reset to main). All previous work on this suggestion is discarded.");
 
         planExecutionService.executeApprovedSuggestion(suggestion);
+        return suggestion;
+    }
+
+    /**
+     * Admin advances a PLAN_PROPOSED suggestion into EXPERT_REVIEW. This is the
+     * explicit human approval gate between plan generation and expert review.
+     * Tasks are not created yet — they will be generated by the main AI Model
+     * after every expert review converges.
+     */
+    @Transactional
+    public Suggestion approvePlan(Long suggestionId) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId)
+                .orElseThrow(() -> new IllegalStateException("Suggestion not found"));
+
+        if (suggestion.getStatus() != SuggestionStatus.PLAN_PROPOSED) {
+            throw new IllegalStateException(
+                    "Only a PLAN_PROPOSED suggestion can have its plan approved (current: "
+                    + suggestion.getStatus() + ")");
+        }
+        if (suggestion.getPlanSummary() == null || suggestion.getPlanSummary().isBlank()) {
+            throw new IllegalStateException("Cannot approve an empty plan");
+        }
+
+        suggestion.setStatus(SuggestionStatus.EXPERT_REVIEW);
+        suggestion.setExpertReviewStep(0);
+        suggestion.setExpertReviewRound(1);
+        suggestion.setTotalExpertReviewRounds(1);
+        suggestion.setExpertReviewNotes(null);
+        suggestion.setExpertReviewPlanChanged(false);
+        suggestion.setCurrentPhase("Plan approved — starting expert reviews...");
+        suggestion.setLastActivityAt(Instant.now());
+        suggestionRepository.save(suggestion);
+
+        messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                "Plan approved. Expert reviews will now run against the plan; tasks will be generated " +
+                "once all expert reviews have completed.");
+        messagingHelper.broadcastUpdate(suggestion);
+
+        expertReviewService.startExpertReviewPipeline(suggestionId);
         return suggestion;
     }
 

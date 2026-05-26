@@ -93,14 +93,53 @@ public class SuggestionService {
     }
 
     /**
-     * On application startup, find any suggestions that were mid-execution
-     * (APPROVED, IN_PROGRESS, or TESTING) and resume Claude to continue the plan.
+     * On application startup, find any suggestions in an AI-pending state and
+     * resume them. Covers mid-execution work (APPROVED, IN_PROGRESS, TESTING)
+     * plus the AI-pending plan flow states (DISCUSSING with stored
+     * clarification answers, EXPERT_REVIEW, GENERATING_TASKS). Skips
+     * suggestions that updated within the last two minutes — they may still
+     * be running in a peer process or just finished.
      */
     @EventListener(ApplicationReadyEvent.class)
     public void resumeSuggestionsOnStartup() {
+        Instant cutoff = Instant.now().minusSeconds(120);
+
         List<Suggestion> toResume = suggestionRepository.findByStatusIn(
                 List.of(SuggestionStatus.APPROVED, SuggestionStatus.IN_PROGRESS, SuggestionStatus.TESTING)
         );
+
+        // Pull AI-pending plan-flow suggestions and resume those via continueWork.
+        List<Suggestion> aiPending = suggestionRepository.findByStatusIn(
+                List.of(SuggestionStatus.DISCUSSING, SuggestionStatus.EXPERT_REVIEW,
+                        SuggestionStatus.GENERATING_TASKS)
+        );
+        for (Suggestion s : aiPending) {
+            // Only DISCUSSING suggestions waiting on AI follow-up are
+            // resumable — those waiting for a user answer must not be
+            // touched.
+            if (s.getStatus() == SuggestionStatus.DISCUSSING) {
+                boolean waitingForUser = s.getPendingClarificationQuestions() != null
+                        && !s.getPendingClarificationQuestions().isBlank();
+                if (waitingForUser) continue;
+            }
+            if (s.getLastActivityAt() != null && s.getLastActivityAt().isAfter(cutoff)) {
+                log.info("Skipping startup resume for suggestion {} — last active {} (within 2min cutoff)",
+                        s.getId(), s.getLastActivityAt());
+                continue;
+            }
+            try {
+                log.info("Resuming AI-pending suggestion {} (status={})", s.getId(), s.getStatus());
+                messagingHelper.addMessage(s.getId(), SenderType.SYSTEM, "System",
+                        "System restarted. Continuing from where we left off...");
+                continueWork(s.getId());
+            } catch (Exception e) {
+                log.error("Failed to resume AI-pending suggestion {} on startup: {}",
+                        s.getId(), e.getMessage(), e);
+                s.setCurrentPhase("Resume failed — can retry");
+                suggestionRepository.save(s);
+                messagingHelper.broadcastUpdate(s);
+            }
+        }
 
         if (toResume.isEmpty()) {
             log.info("No approved/in-progress suggestions to resume on startup");
@@ -112,9 +151,13 @@ public class SuggestionService {
         // Resume IN_PROGRESS/TESTING suggestions first (already running), then try APPROVED
         List<Suggestion> active = toResume.stream()
                 .filter(s -> s.getStatus() != SuggestionStatus.APPROVED)
+                .filter(s -> s.getLastActivityAt() == null
+                        || s.getLastActivityAt().isBefore(cutoff))
                 .toList();
         List<Suggestion> approved = toResume.stream()
                 .filter(s -> s.getStatus() == SuggestionStatus.APPROVED)
+                .filter(s -> s.getLastActivityAt() == null
+                        || s.getLastActivityAt().isBefore(cutoff))
                 .toList();
 
         for (Suggestion suggestion : active) {
@@ -672,6 +715,69 @@ public class SuggestionService {
 
         fireClarificationFollowUp(suggestionId, claudePrompt.toString());
         return suggestion;
+    }
+
+    /**
+     * Resume whatever AI step was in flight on this suggestion. Dispatches on
+     * status: DISCUSSING re-fires the clarification follow-up (if answers
+     * are stored) or the initial evaluation; EXPERT_REVIEW re-enters the
+     * review pipeline; GENERATING_TASKS re-fires the post-review task
+     * generation; IN_PROGRESS/TESTING resume from the last successful task.
+     * Throws if the suggestion is in a non-resumable state.
+     */
+    @Transactional
+    public Suggestion continueWork(Long suggestionId) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId)
+                .orElseThrow(() -> new IllegalStateException("Suggestion not found"));
+
+        SuggestionStatus status = suggestion.getStatus();
+        switch (status) {
+            case DISCUSSING -> {
+                if (suggestion.getPendingClarificationQuestions() != null
+                        && !suggestion.getPendingClarificationQuestions().isBlank()) {
+                    throw new IllegalStateException(
+                            "Waiting for you to answer the clarification questions — nothing to continue yet");
+                }
+                if (suggestion.getLastClarificationAnswers() != null
+                        && !suggestion.getLastClarificationAnswers().isBlank()) {
+                    // Same path as the explicit Retry button.
+                    return retryClarification(suggestionId);
+                }
+                // No prior answers — kick off / re-run the initial evaluation.
+                suggestion.setCurrentPhase("Restarting AI evaluation...");
+                suggestionRepository.save(suggestion);
+                messagingHelper.broadcastUpdate(suggestion);
+                triggerAiEvaluation(suggestion);
+                return suggestion;
+            }
+            case PLAN_PROPOSED -> throw new IllegalStateException(
+                    "Plan is waiting for your review — use Approve plan or Request changes");
+            case EXPERT_REVIEW -> {
+                messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                        "Continuing AI expert review from where it stopped.");
+                expertReviewService.startExpertReviewPipeline(suggestionId);
+                return suggestion;
+            }
+            case GENERATING_TASKS -> {
+                messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                        "Continuing task generation from the approved plan.");
+                expertReviewService.generateTasksFromApprovedPlan(suggestion);
+                return suggestion;
+            }
+            case APPROVED -> {
+                messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                        "Continuing plan execution.");
+                planExecutionService.executeApprovedSuggestion(suggestion);
+                return suggestion;
+            }
+            case IN_PROGRESS, TESTING, DEV_COMPLETE -> {
+                // Delegate to the existing "resume from last successful task"
+                // path, which is the cheapest correct continuation.
+                return retryFromLastSuccessful(suggestionId);
+            }
+            default -> throw new IllegalStateException(
+                    "Cannot continue from status " + status);
+        }
     }
 
     // --- Expert Review Pipeline (delegated to ExpertReviewService) ---

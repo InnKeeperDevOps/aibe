@@ -273,6 +273,33 @@ export async function loadDetail(id) {
         retryClarificationActions.style.display = canRetryClarification ? '' : 'none';
     }
 
+    // Continue — generic resume affordance. Visible to admins on any
+    // AI-pending state where there is something concrete to resume.
+    // Specifically NOT shown while the suggestion is waiting on the user
+    // to answer clarification questions (the wizard handles that).
+    const waitingOnUser = !!(suggestion.pendingClarificationQuestions
+            && suggestion.pendingClarificationQuestions.length);
+    const continueStates = ['DISCUSSING', 'EXPERT_REVIEW', 'GENERATING_TASKS',
+                            'APPROVED', 'IN_PROGRESS', 'TESTING', 'DEV_COMPLETE'];
+    const canContinue = isAdmin
+            && continueStates.includes(suggestion.status)
+            && !waitingOnUser;
+    const continueActions = document.getElementById('continueActions');
+    if (continueActions) continueActions.style.display = canContinue ? '' : 'none';
+    const continueHint = document.getElementById('continueHint');
+    if (continueHint && canContinue) {
+        const hintByStatus = {
+            DISCUSSING: 'Re-fire the AI call with the previous answers (or restart evaluation).',
+            EXPERT_REVIEW: 'Resume the AI expert review pipeline.',
+            GENERATING_TASKS: 'Re-fire task generation from the approved plan.',
+            APPROVED: 'Start plan execution.',
+            IN_PROGRESS: 'Resume execution from the last successful task.',
+            TESTING: 'Resume execution from the last successful task.',
+            DEV_COMPLETE: 'Re-run the post-task pipeline.',
+        };
+        continueHint.textContent = hintByStatus[suggestion.status] || '';
+    }
+
     // Resume from last successful step — keeps completed work, reruns the rest.
     // Shown while the plan is mid-execution OR when all tasks finished but the
     // commit/push/PR pipeline failed (status DEV_COMPLETE + a "failed" phase).
@@ -523,6 +550,21 @@ export async function approvePlan() {
             btn.disabled = false;
             btn.textContent = originalText;
         }
+    }
+}
+
+export async function continueWork() {
+    const btn = document.querySelector('#continueActions button');
+    if (btn) { btn.disabled = true; btn.textContent = 'Continuing...'; }
+    try {
+        const result = await api('/suggestions/' + state.currentSuggestion + '/continue', { method: 'POST' });
+        if (result && result.error) {
+            alert('Continue failed: ' + result.error);
+        }
+    } catch (e) {
+        alert('Continue failed: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Continue'; }
     }
 }
 

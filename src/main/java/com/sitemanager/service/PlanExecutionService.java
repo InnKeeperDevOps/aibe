@@ -427,7 +427,13 @@ public class PlanExecutionService {
 
         int totalTasks = tasks.size();
         int taskOrder = nextTask.getTaskOrder();
-        log.info("[AI-FLOW] suggestion={} executing task {}/{}: {}", suggestionId, taskOrder, totalTasks, nextTask.getTitle());
+        // Task title is AI/user-generated and may contain class names like
+        // "GroupActionError" or words like "Exception" / "Failed". Scrub those
+        // keywords before logging at INFO so a benign title cannot masquerade
+        // as a service-level error to log-scraping tooling (see prior
+        // git-clone INFO-log scrub for the same issue).
+        log.info("[AI-FLOW] suggestion={} executing task {}/{}: {}",
+                suggestionId, taskOrder, totalTasks, scrubAlertKeywords(nextTask.getTitle()));
 
         nextTask.setStatus(TaskStatus.IN_PROGRESS);
         nextTask.setStartedAt(Instant.now());
@@ -1247,6 +1253,28 @@ public class PlanExecutionService {
     static String trimTo1000(String s) {
         if (s == null) return "";
         return s.length() > 1000 ? s.substring(0, 1000) : s;
+    }
+
+    private static final java.util.regex.Pattern ALERT_KEYWORDS_PATTERN =
+            java.util.regex.Pattern.compile("(?i)(error|exception|failed|failure|fatal)");
+
+    /**
+     * Neutralize words that log-scraping tooling treats as service-error
+     * markers when they appear inside AI/user-generated text (task titles,
+     * messages, etc.) that we want to keep at INFO. A benign title like
+     * "Add GroupActionError class" would otherwise be flagged as if the
+     * service itself had emitted an error. We break each keyword in the
+     * middle with an underscore (e.g. "Error" -> "E_rror"), which keeps
+     * the word visually recognisable for humans but prevents naive
+     * substring or word-boundary matches from firing on it.
+     */
+    static String scrubAlertKeywords(String s) {
+        if (s == null) return "";
+        return ALERT_KEYWORDS_PATTERN.matcher(s).replaceAll(m -> {
+            String word = m.group();
+            if (word.length() < 2) return word;
+            return word.charAt(0) + "_" + word.substring(1);
+        });
     }
 
     /**

@@ -881,14 +881,34 @@ public class SuggestionService {
         messagingHelper.broadcastUpdate(suggestion);
 
         StringBuilder prompt = new StringBuilder();
-        prompt.append("The admin has reviewed the current plan and requested changes. Their feedback:\n\n");
+        prompt.append("The admin has reviewed the current plan and requested changes.\n\n");
+
+        // Embed the current plan text inline so Claude can reason about it
+        // directly — the chat history only contains friendly 'message' fields,
+        // not the actual plan content, so clarification questions would be
+        // useless without this.
+        String currentLowLevel = suggestion.getPlanSummary();
+        String currentHighLevel = suggestion.getPlanDisplaySummary();
+        if (currentLowLevel != null && !currentLowLevel.isBlank()) {
+            prompt.append("CURRENT LOW-LEVEL (technical) plan:\n");
+            prompt.append(currentLowLevel).append("\n\n");
+        }
+        if (currentHighLevel != null && !currentHighLevel.isBlank()
+                && !currentHighLevel.equals(currentLowLevel)) {
+            prompt.append("CURRENT HIGH-LEVEL (user-facing) plan:\n");
+            prompt.append(currentHighLevel).append("\n\n");
+        }
+
+        prompt.append("Admin feedback on the plan above:\n\n");
         prompt.append(feedback).append("\n\n");
-        prompt.append("Based on this feedback and the existing context, decide between:\n");
+        prompt.append("Based on this feedback and the plan text above, decide between:\n");
         prompt.append("1. If the feedback is clear enough to act on, produce a REVISED plan that " +
                 "incorporates the requested changes. Respond with PLAN_READY.\n");
-        prompt.append("2. If the feedback is ambiguous or you need more information to act, ask " +
-                "clarifying questions. Respond with NEEDS_CLARIFICATION. Do this until you have enough " +
-                "to revise the plan.\n\n");
+        prompt.append("2. If the feedback is ambiguous, references something not in the current plan, " +
+                "or you need more information to act, ask clarifying questions ANCHORED to specific " +
+                "parts of the plan shown above. Respond with NEEDS_CLARIFICATION. Do this until you " +
+                "have enough to revise the plan. Reference the relevant plan text in your questions " +
+                "so the admin knows what you're asking about.\n\n");
         prompt.append("PLAN COMPLETENESS RULES:\n");
         prompt.append("- The revised plan MUST contain ALL work needed to implement the suggestion " +
                 "end-to-end. Do not drop existing scope unless the admin explicitly asked.\n");

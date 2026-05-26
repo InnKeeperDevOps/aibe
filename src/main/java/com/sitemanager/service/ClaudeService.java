@@ -1539,7 +1539,7 @@ public class ClaudeService {
 
         // Expert reviews and feedback always get a fresh session (no resume)
         boolean isExpertOp = operationType.startsWith("expert-review:") || operationType.startsWith("review-feedback:");
-        String cliSessionId = isExpertOp ? null : sessionMap.get(sessionId);
+        String cliSessionId = (isExpertOp || sessionId == null) ? null : sessionMap.get(sessionId);
         boolean isResume = cliSessionId != null;
 
         // Build command with optional model and max-turns flags
@@ -1715,7 +1715,7 @@ public class ClaudeService {
         }
 
         // Store the CLI session ID for future --resume calls
-        if (parsedCliSessionId != null && !parsedCliSessionId.isBlank()) {
+        if (sessionId != null && parsedCliSessionId != null && !parsedCliSessionId.isBlank()) {
             sessionMap.put(sessionId, parsedCliSessionId);
             log.debug("{} stored CLI session: {}", logPrefix, parsedCliSessionId);
         }
@@ -1795,7 +1795,9 @@ public class ClaudeService {
                                       String operationType, String model, int maxTurns) throws Exception {
         log.warn("[CLAUDE-{}] session={} is dead, starting fresh session with conversation context",
                 operationType, sessionId);
-        sessionMap.remove(sessionId);
+        if (sessionId != null) {
+            sessionMap.remove(sessionId);
+        }
 
         String rebuiltPrompt;
         if (conversationContext != null && !conversationContext.isBlank()) {

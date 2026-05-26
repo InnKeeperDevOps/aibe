@@ -343,6 +343,18 @@ public class SuggestionController {
         }
     }
 
+    @PostMapping("/{id}/retry-clarification")
+    public ResponseEntity<?> retryClarification(@PathVariable Long id, HttpSession session) {
+        if (!permissionService.hasPermission(session, Permission.APPROVE_DENY_SUGGESTIONS)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Admin access required"));
+        }
+        try {
+            return ResponseEntity.ok(suggestionService.retryClarification(id));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @PostMapping("/{id}/request-plan-changes")
     public ResponseEntity<?> requestPlanChanges(@PathVariable Long id,
                                                 @RequestBody Map<String, String> body,

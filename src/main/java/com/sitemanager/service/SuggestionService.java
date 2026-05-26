@@ -553,21 +553,125 @@ public class SuggestionService {
         claudePrompt.append("DO NOT include a 'tasks' array — tasks are generated later from the approved plan, not here. ");
         claudePrompt.append("The two layers should differ meaningfully — low-level has technical specifics, high-level has plain language.");
 
-        // Continue the Claude conversation
+        // Persist the answers so we can replay them via retryClarification if
+        // the Claude call below fails or hangs.
+        try {
+            suggestion.setLastClarificationAnswers(objectMapper.writeValueAsString(answers));
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to serialize clarification answers for retry: {}", e.getMessage());
+        }
         suggestion.setCurrentPhase("Reviewing your answers...");
         suggestionRepository.save(suggestion);
         messagingHelper.broadcastUpdate(suggestion);
 
+        fireClarificationFollowUp(suggestionId, claudePrompt.toString());
+    }
+
+    /**
+     * Marker phase set when a clarification follow-up Claude call explodes.
+     * Surfaced in the UI as a "Retry" affordance.
+     */
+    static final String CLARIFICATION_RETRY_PHASE =
+            "AI clarification call failed — retry available";
+
+    private void fireClarificationFollowUp(Long suggestionId, String prompt) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId).orElse(null);
+        if (suggestion == null) return;
         String context = buildConversationContext(suggestionId);
         claudeService.continueConversation(
                 suggestion.getClaudeSessionId(),
-                claudePrompt.toString(),
+                prompt,
                 context,
                 claudeService.getMainRepoDir(),
                 progress -> messagingHelper.broadcastProgress(suggestionId, progress)
         ).thenAccept(response -> {
             handleAiResponse(suggestionId, response);
+        }).exceptionally(ex -> {
+            log.warn("Clarification follow-up call failed for suggestion {}: {}",
+                    suggestionId, ex.getMessage());
+            Suggestion fresh = suggestionRepository.findById(suggestionId).orElse(null);
+            if (fresh != null) {
+                fresh.setCurrentPhase(CLARIFICATION_RETRY_PHASE);
+                fresh.setFailureReason(ex.getMessage());
+                suggestionRepository.save(fresh);
+                messagingHelper.broadcastUpdate(fresh);
+                messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                        "The AI call to process your answers failed: " + ex.getMessage()
+                        + ". Click \"Retry AI call\" to send the same answers again.");
+            }
+            return null;
         });
+    }
+
+    /**
+     * Replay the most recent clarification answers through Claude — same prompt
+     * structure as {@link #handleClarificationAnswers}, but without re-adding
+     * the answers to the discussion thread (they were posted on the first try).
+     * Throws if there are no stored answers to retry.
+     */
+    @Transactional
+    public Suggestion retryClarification(Long suggestionId) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId)
+                .orElseThrow(() -> new IllegalStateException("Suggestion not found"));
+
+        String storedJson = suggestion.getLastClarificationAnswers();
+        if (storedJson == null || storedJson.isBlank()) {
+            throw new IllegalStateException("No clarification answers stored to retry");
+        }
+
+        List<ClarificationRequest.ClarificationAnswer> answers;
+        try {
+            answers = objectMapper.readValue(storedJson,
+                    new TypeReference<List<ClarificationRequest.ClarificationAnswer>>() {});
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Stored clarification answers are corrupt: " + e.getMessage());
+        }
+        if (answers == null || answers.isEmpty()) {
+            throw new IllegalStateException("Stored clarification answers are empty");
+        }
+
+        // Rebuild the same prompt the first call used. Keep this in sync with
+        // the prompt assembly in handleClarificationAnswers.
+        StringBuilder claudePrompt = new StringBuilder();
+        claudePrompt.append("The user has provided the following clarification answers:\n\n");
+        for (ClarificationRequest.ClarificationAnswer qa : answers) {
+            claudePrompt.append("Question: ").append(qa.getQuestion()).append("\n");
+            claudePrompt.append("Answer: ").append(qa.getAnswer()).append("\n\n");
+        }
+        claudePrompt.append("Based on these answers and the original suggestion, please evaluate again:\n");
+        claudePrompt.append("1. If you still need more information, respond with NEEDS_CLARIFICATION status and a new set of questions.\n");
+        claudePrompt.append("2. If you now have enough information, create a COMPLETE implementation plan and respond with PLAN_READY status.\n\n");
+        claudePrompt.append("PLAN COMPLETENESS RULES:\n");
+        claudePrompt.append("- The plan MUST contain ALL work needed to implement the suggestion end-to-end. " +
+                "Cover backend, frontend, data model, migrations, tests, configuration, and any user-visible changes. " +
+                "Do not leave gaps that would need to be filled in later.\n");
+        claudePrompt.append("- DO NOT produce a tasks list at this stage. Tasks will be generated AFTER the plan has been " +
+                "reviewed and approved. Focus entirely on the plan text.\n\n");
+        claudePrompt.append("DUAL-LEVEL DETAIL RULES:\n");
+        claudePrompt.append("- 'plan' is the low-level technical version (may reference files/classes/frameworks).\n");
+        claudePrompt.append("- 'planDisplaySummary' is the high-level plain-language version for the user.\n");
+        claudePrompt.append("- They must differ meaningfully.\n\n");
+        claudePrompt.append("Respond in this JSON format:\n");
+        claudePrompt.append("If clarification needed:\n");
+        claudePrompt.append("{\"status\": \"NEEDS_CLARIFICATION\", ");
+        claudePrompt.append("\"message\": \"brief summary of what you still need to know\", ");
+        claudePrompt.append("\"questions\": [\"specific question 1\", \"specific question 2\", ...]}\n\n");
+        claudePrompt.append("If ready to plan:\n");
+        claudePrompt.append("{\"status\": \"PLAN_READY\", ");
+        claudePrompt.append("\"message\": \"plain-language summary\", ");
+        claudePrompt.append("\"plan\": \"COMPLETE low-level technical plan covering all work end-to-end\", ");
+        claudePrompt.append("\"planDisplaySummary\": \"high-level plain-language plan summary for the user\"}");
+
+        suggestion.setFailureReason(null);
+        suggestion.setCurrentPhase("Retrying — reviewing your answers...");
+        suggestion.setLastActivityAt(Instant.now());
+        suggestionRepository.save(suggestion);
+        messagingHelper.broadcastUpdate(suggestion);
+        messagingHelper.addMessage(suggestionId, SenderType.SYSTEM, "System",
+                "Retrying the AI call with the previous answers.");
+
+        fireClarificationFollowUp(suggestionId, claudePrompt.toString());
+        return suggestion;
     }
 
     // --- Expert Review Pipeline (delegated to ExpertReviewService) ---

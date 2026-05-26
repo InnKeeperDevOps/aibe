@@ -265,6 +265,14 @@ export async function loadDetail(id) {
     const canRetryExecution = isAdmin && suggestion.currentPhase && suggestion.currentPhase.includes('can retry');
     document.getElementById('retryExecutionActions').style.display = canRetryExecution ? '' : 'none';
 
+    // Retry clarification — visible when the AI call after answers exploded.
+    const canRetryClarification = isAdmin && suggestion.currentPhase
+            && suggestion.currentPhase.includes('clarification call failed');
+    const retryClarificationActions = document.getElementById('retryClarificationActions');
+    if (retryClarificationActions) {
+        retryClarificationActions.style.display = canRetryClarification ? '' : 'none';
+    }
+
     // Resume from last successful step — keeps completed work, reruns the rest.
     // Shown while the plan is mid-execution OR when all tasks finished but the
     // commit/push/PR pipeline failed (status DEV_COMPLETE + a "failed" phase).
@@ -515,6 +523,21 @@ export async function approvePlan() {
             btn.disabled = false;
             btn.textContent = originalText;
         }
+    }
+}
+
+export async function retryClarification() {
+    const btn = document.querySelector('#retryClarificationActions button');
+    if (btn) { btn.disabled = true; btn.textContent = 'Retrying...'; }
+    try {
+        const result = await api('/suggestions/' + state.currentSuggestion + '/retry-clarification', { method: 'POST' });
+        if (result && result.error) {
+            alert('Retry failed: ' + result.error);
+        }
+    } catch (e) {
+        alert('Retry failed: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Retry AI call'; }
     }
 }
 

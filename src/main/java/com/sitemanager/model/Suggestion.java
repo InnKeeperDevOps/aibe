@@ -113,6 +113,9 @@ public class Suggestion {
     @Column(name = "experts_approved_current_plan", nullable = false)
     private boolean expertsApprovedCurrentPlan = false;
 
+    @Column(name = "last_clarification_answers", columnDefinition = "TEXT")
+    private String lastClarificationAnswers;
+
     public Suggestion() {}
 
     @PrePersist
@@ -236,6 +239,8 @@ public class Suggestion {
     public void setFailureReason(String failureReason) { this.failureReason = failureReason; }
     public boolean isExpertsApprovedCurrentPlan() { return expertsApprovedCurrentPlan; }
     public void setExpertsApprovedCurrentPlan(boolean v) { this.expertsApprovedCurrentPlan = v; }
+    public String getLastClarificationAnswers() { return lastClarificationAnswers; }
+    public void setLastClarificationAnswers(String v) { this.lastClarificationAnswers = v; }
 
     public Map<String, ExpertApprovalEntry> getExpertApprovalMap() {
         if (expertApprovalTracker == null || expertApprovalTracker.isBlank()) {

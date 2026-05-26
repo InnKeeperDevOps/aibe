@@ -422,99 +422,52 @@ public class ExpertReviewService {
         }
 
         if (applyChanges) {
-            boolean allChangesBlocked = false;
-            String ownerLockNote = "";
-
+            // Pull the expert's analysis + proposedChanges from the ORIGINAL
+            // expert response. We deliberately ignore any 'revisedPlan' field
+            // the expert may have emitted — the main AI model writes the
+            // rewrite from the critique, so the plan voice stays consistent.
+            String proposedChanges = "";
             try {
                 String json = extractJsonBlock(originalExpertResponse);
                 if (json != null) {
                     JsonNode root = objectMapper.readTree(json);
-                    List<Integer> lockedSections = suggestion.getOwnerLockedSections();
-                    boolean hasTaskChanges = root.has("revisedTasks") && root.get("revisedTasks").isArray();
-                    boolean hasPlanChanges = root.has("revisedPlan") || root.has("revisedPlanDisplaySummary");
-
-                    if (!lockedSections.isEmpty() && hasTaskChanges) {
-                        OwnerLockResult lockResult = enforceOwnerLockOnTasks(
-                                suggestionId, root.get("revisedTasks"), lockedSections);
-
-                        if (lockResult.allTaskChangesBlocked()) {
-                            ownerLockNote = lockResult.blockedNote();
-                            if (!hasPlanChanges) {
-                                allChangesBlocked = true;
-                            } else {
-                                if (root.has("revisedPlan")) {
-                                    suggestion.setPlanSummary(root.get("revisedPlan").asText());
-                                }
-                                if (root.has("revisedPlanDisplaySummary")) {
-                                    suggestion.setPlanDisplaySummary(
-                                            root.get("revisedPlanDisplaySummary").asText());
-                                }
-                            }
-                        } else {
-                            if (root.has("revisedPlan")) {
-                                suggestion.setPlanSummary(root.get("revisedPlan").asText());
-                            }
-                            if (root.has("revisedPlanDisplaySummary")) {
-                                suggestion.setPlanDisplaySummary(
-                                        root.get("revisedPlanDisplaySummary").asText());
-                            }
-                            savePlanTasksFromNode(suggestionId, lockResult.filteredTasks());
-                            if (lockResult.anyBlocked()) {
-                                ownerLockNote = lockResult.blockedNote();
-                            }
-                        }
-                    } else {
-                        if (root.has("revisedPlan")) {
-                            suggestion.setPlanSummary(root.get("revisedPlan").asText());
-                        }
-                        if (root.has("revisedPlanDisplaySummary")) {
-                            suggestion.setPlanDisplaySummary(
-                                    root.get("revisedPlanDisplaySummary").asText());
-                        }
-                        if (hasTaskChanges) {
-                            savePlanTasksFromNode(suggestionId, root.get("revisedTasks"));
-                        }
+                    if (root.has("proposedChanges")) {
+                        proposedChanges = root.get("proposedChanges").asText();
                     }
                 }
             } catch (Exception e) {
-                log.warn("Failed to apply expert changes: {}", e.getMessage());
+                log.warn("Failed to parse expert proposedChanges for suggestion {}: {}",
+                        suggestionId, e.getMessage());
             }
 
-            if (allChangesBlocked) {
-                appendExpertNote(suggestion, expert,
-                        "Proposed changes — not applied. All task changes were blocked by owner-lock constraints. "
-                        + ownerLockNote + "\nReviewer: " + reviewerNotes);
-                addMessage(suggestionId, SenderType.AI, expert.getDisplayName(),
-                        expertMessage + "\n\n*Recommendations were noted but owner-protected tasks prevented changes from being applied.*");
-                advanceExpertStep(suggestion);
-                broadcastTasks(suggestionId);
-                runNextExpertReview(suggestionId);
-            } else {
-                updateApprovalTracker(suggestion, expert, "CHANGES_APPLIED", currentRound);
-                String noteExtra = ownerLockNote.isBlank() ? "" : "\nOwner lock: " + ownerLockNote;
-                appendExpertNote(suggestion, expert,
-                        "Proposed changes — ACCEPTED. " + expertAnalysis +
-                        "\nReviewer: " + reviewerNotes + noteExtra);
-                addMessage(suggestionId, SenderType.AI, expert.getDisplayName(),
-                        expertMessage + "\n\n*Changes have been applied to the plan.*");
+            suggestion.setCurrentPhase("Applying " + expert.getDisplayName()
+                    + "'s feedback to the plan via the main AI...");
+            suggestionRepository.save(suggestion);
+            broadcastUpdate(suggestion);
 
-                suggestion.setExpertReviewPlanChanged(true);
-                String changedDomain = expert.domain().name();
-                String existing = suggestion.getExpertReviewChangedDomains();
-                if (existing == null || existing.isBlank()) {
-                    suggestion.setExpertReviewChangedDomains(changedDomain);
-                } else if (!existing.contains(changedDomain)) {
-                    suggestion.setExpertReviewChangedDomains(existing + "," + changedDomain);
-                }
-                suggestionRepository.save(suggestion);
-
-                addMessage(suggestionId, SenderType.SYSTEM, "System",
-                        "The plan was updated. Remaining experts will continue reviewing before a new round begins.");
-                advanceExpertStep(suggestion);
-                broadcastTasks(suggestionId);
-                broadcastExpertReviewStatus(suggestionId);
-                runNextExpertReview(suggestionId);
-            }
+            final String finalProposedChanges = proposedChanges;
+            final String finalReviewerNotes = reviewerNotes;
+            final int finalCurrentRound = currentRound;
+            claudeService.applyExpertFeedbackToPlan(
+                    suggestion.getTitle(),
+                    suggestion.getDescription(),
+                    suggestion.getPlanSummary(),
+                    suggestion.getPlanDisplaySummary(),
+                    expert.getDisplayName(),
+                    expertAnalysis,
+                    proposedChanges,
+                    claudeService.getMainRepoDir(),
+                    progress -> messagingHelper.broadcastProgress(suggestionId, progress)
+            ).thenAccept(revisedResponse -> finalizeExpertPlanRevision(
+                    suggestionId, expert, expertAnalysis, expertMessage,
+                    finalReviewerNotes, finalCurrentRound, revisedResponse, null
+            )).exceptionally(ex -> {
+                log.error("Main AI revision after expert {} failed for suggestion {}: {}",
+                        expert.getDisplayName(), suggestionId, ex.getMessage(), ex);
+                finalizeExpertPlanRevision(suggestionId, expert, expertAnalysis, expertMessage,
+                        finalReviewerNotes, finalCurrentRound, null, ex.getMessage());
+                return null;
+            });
         } else {
             updateApprovalTracker(suggestion, expert, "APPROVED", currentRound);
             appendExpertNote(suggestion, expert,
@@ -884,50 +837,57 @@ public class ExpertReviewService {
     private void applyProjectOwnerChanges(Long suggestionId, Suggestion suggestion,
                                            JsonNode root, String response,
                                            String analysis, String message) {
+        // lockedTaskIndices is still parsed here for forward-compat even though
+        // tasks don't exist yet during expert review; storing the hints lets
+        // the post-review task generator (or a future feature) honour them.
         try {
-            if (root.has("revisedPlan")) {
-                suggestion.setPlanSummary(root.get("revisedPlan").asText());
-            }
-            if (root.has("revisedPlanDisplaySummary")) {
-                suggestion.setPlanDisplaySummary(root.get("revisedPlanDisplaySummary").asText());
-            }
-            if (root.has("revisedTasks") && root.get("revisedTasks").isArray()) {
-                savePlanTasksFromNode(suggestionId, root.get("revisedTasks"));
-            }
-
             if (root.has("lockedTaskIndices") && root.get("lockedTaskIndices").isArray()) {
                 List<Integer> lockedIndices = new ArrayList<>();
                 for (JsonNode idx : root.get("lockedTaskIndices")) {
                     lockedIndices.add(idx.asInt());
                 }
                 suggestion.setOwnerLockedSections(lockedIndices);
+                suggestionRepository.save(suggestion);
             }
-
-            suggestion.setExpertReviewPlanChanged(true);
-            String changedDomain = ExpertRole.PROJECT_OWNER.domain().name();
-            String existingDomains = suggestion.getExpertReviewChangedDomains();
-            if (existingDomains == null || existingDomains.isBlank()) {
-                suggestion.setExpertReviewChangedDomains(changedDomain);
-            } else if (!existingDomains.contains(changedDomain)) {
-                suggestion.setExpertReviewChangedDomains(existingDomains + "," + changedDomain);
-            }
-
-            appendExpertNote(suggestion, ExpertRole.PROJECT_OWNER, "Changes applied. " + analysis);
-            addMessage(suggestionId, SenderType.AI, ExpertRole.PROJECT_OWNER.getDisplayName(),
-                    message + "\n\n*Changes have been applied to the plan.*");
-
-            broadcastExpertReviewStatus(suggestionId);
-            advanceExpertStep(suggestion);
-            runNextExpertReview(suggestionId);
-
         } catch (Exception e) {
-            log.error("Failed to apply Project Owner changes for suggestion {}: {}",
-                    suggestionId, e.getMessage(), e);
-            appendExpertNote(suggestion, ExpertRole.PROJECT_OWNER, "Approved.");
-            addMessage(suggestionId, SenderType.AI, ExpertRole.PROJECT_OWNER.getDisplayName(), "Approved.");
-            advanceExpertStep(suggestion);
-            runNextExpertReview(suggestionId);
+            log.warn("Failed to parse lockedTaskIndices from Project Owner: {}", e.getMessage());
         }
+
+        String proposedChanges = "";
+        try {
+            if (root.has("proposedChanges")) {
+                proposedChanges = root.get("proposedChanges").asText();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to read Project Owner proposedChanges: {}", e.getMessage());
+        }
+
+        suggestion.setCurrentPhase("Applying Project Owner's feedback to the plan via the main AI...");
+        suggestionRepository.save(suggestion);
+        broadcastUpdate(suggestion);
+
+        int currentRound = suggestion.getExpertReviewRound() != null
+                ? suggestion.getExpertReviewRound() : 1;
+        claudeService.applyExpertFeedbackToPlan(
+                suggestion.getTitle(),
+                suggestion.getDescription(),
+                suggestion.getPlanSummary(),
+                suggestion.getPlanDisplaySummary(),
+                ExpertRole.PROJECT_OWNER.getDisplayName(),
+                analysis,
+                proposedChanges,
+                claudeService.getMainRepoDir(),
+                progress -> messagingHelper.broadcastProgress(suggestionId, progress)
+        ).thenAccept(revisedResponse -> finalizeExpertPlanRevision(
+                suggestionId, ExpertRole.PROJECT_OWNER, analysis, message,
+                "(no reviewer — Project Owner change)", currentRound, revisedResponse, null
+        )).exceptionally(ex -> {
+            log.error("Main AI revision after Project Owner feedback failed for suggestion {}: {}",
+                    suggestionId, ex.getMessage(), ex);
+            finalizeExpertPlanRevision(suggestionId, ExpertRole.PROJECT_OWNER, analysis, message,
+                    "(no reviewer — Project Owner change)", currentRound, null, ex.getMessage());
+            return null;
+        });
     }
 
     private void advanceExpertStep(Suggestion suggestion) {
@@ -1220,6 +1180,88 @@ public class ExpertReviewService {
                 userNotificationHandler.sendNotificationToUser(admin.getUsername(), payload);
             }
         }
+    }
+
+    /**
+     * Apply the main-AI-authored plan revision after an expert proposed
+     * changes. Called from the apply-feedback future's thenAccept on success
+     * (revisedResponse non-null) or exceptionally on failure (failureReason
+     * non-null). On success, write the new plan and advance to the next
+     * expert. On failure, leave the plan untouched, post a system message,
+     * and halt at the current expert step so the Continue button can retry.
+     */
+    private void finalizeExpertPlanRevision(Long suggestionId, ExpertRole expert,
+                                              String expertAnalysis, String expertMessage,
+                                              String reviewerNotes, int currentRound,
+                                              String revisedResponse, String failureReason) {
+        Suggestion suggestion = suggestionRepository.findById(suggestionId).orElse(null);
+        if (suggestion == null) return;
+
+        String newLow = null;
+        String newHigh = null;
+        if (revisedResponse != null) {
+            try {
+                String json = extractJsonBlock(revisedResponse);
+                if (json != null) {
+                    JsonNode root = objectMapper.readTree(json);
+                    if (root.has("plan")) newLow = root.get("plan").asText();
+                    if (root.has("planDisplaySummary")) newHigh = root.get("planDisplaySummary").asText();
+                }
+            } catch (Exception e) {
+                log.warn("Main AI revision response was unparseable for suggestion {}: {}",
+                        suggestionId, e.getMessage());
+            }
+        }
+
+        if (newLow == null || newLow.isBlank()) {
+            // Main AI failed or returned garbage. Leave the plan unchanged and
+            // halt at this expert step so Continue can replay the same review.
+            String msg = failureReason != null
+                    ? "Main AI revision failed: " + failureReason
+                    : "Main AI revision returned no usable plan content.";
+            log.warn("[suggestion={}] {}", suggestionId, msg);
+            suggestion.setCurrentPhase("Expert plan revision failed — retry available");
+            suggestion.setFailureReason(msg);
+            suggestionRepository.save(suggestion);
+            broadcastUpdate(suggestion);
+            addMessage(suggestionId, SenderType.SYSTEM, "System",
+                    expert.getDisplayName() + "'s feedback could not be applied to the plan: "
+                    + msg + " Use the Continue button to retry.");
+            return;
+        }
+
+        // Success: write the revised plan and advance.
+        suggestion.setPlanSummary(newLow);
+        if (newHigh != null && !newHigh.isBlank()) {
+            suggestion.setPlanDisplaySummary(newHigh);
+        }
+        suggestion.setExpertsApprovedCurrentPlan(false);
+        suggestion.setFailureReason(null);
+        suggestion.setExpertReviewPlanChanged(true);
+
+        String changedDomain = expert.domain().name();
+        String existing = suggestion.getExpertReviewChangedDomains();
+        if (existing == null || existing.isBlank()) {
+            suggestion.setExpertReviewChangedDomains(changedDomain);
+        } else if (!existing.contains(changedDomain)) {
+            suggestion.setExpertReviewChangedDomains(existing + "," + changedDomain);
+        }
+
+        updateApprovalTracker(suggestion, expert, "CHANGES_APPLIED", currentRound);
+        appendExpertNote(suggestion, expert,
+                "Proposed changes — ACCEPTED and applied by main AI. " + expertAnalysis +
+                "\nReviewer: " + reviewerNotes);
+        addMessage(suggestionId, SenderType.AI, expert.getDisplayName(),
+                expertMessage + "\n\n*Recommendations were folded into the plan by the main AI.*");
+
+        suggestionRepository.save(suggestion);
+        addMessage(suggestionId, SenderType.SYSTEM, "System",
+                "The plan was updated by the main AI based on expert feedback. " +
+                "Remaining experts will continue reviewing before a new round begins.");
+        advanceExpertStep(suggestion);
+        broadcastTasks(suggestionId);
+        broadcastExpertReviewStatus(suggestionId);
+        runNextExpertReview(suggestionId);
     }
 
     /**

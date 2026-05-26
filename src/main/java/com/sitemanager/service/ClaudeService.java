@@ -960,6 +960,65 @@ public class ClaudeService {
     }
 
     /**
+     * Apply an AI expert's critique to the current plan via the MAIN AI model.
+     * The expert reviews are advisory: they identify what's missing or wrong
+     * (analysis + proposedChanges), and this call asks the main model to
+     * author the revised plan. Keeps the main model as the sole author of
+     * plan content, so the plan voice / style stays consistent across
+     * iterations. Returns JSON with {plan, planDisplaySummary} on success
+     * or {status:"FAILED", message:"..."} on failure.
+     */
+    public CompletableFuture<String> applyExpertFeedbackToPlan(String suggestionTitle,
+                                                                String suggestionDescription,
+                                                                String currentLowLevelPlan,
+                                                                String currentHighLevelPlan,
+                                                                String expertDisplayName,
+                                                                String expertAnalysis,
+                                                                String expertProposedChanges,
+                                                                String workingDir,
+                                                                Consumer<String> progressCallback) {
+        String prompt = prependManagedFoldersScope(String.format(
+                "You are the main planning model and you own the plan for this suggestion. " +
+                "An AI expert (%s) just reviewed the current plan and recommended changes. " +
+                "Your job is to incorporate those recommendations and produce a REVISED plan. " +
+                "You are NOT writing the recommendations as-is — you decide how best to fold them " +
+                "into the existing plan while preserving everything the user still needs.\n\n" +
+                "Suggestion Title: %s\n" +
+                "Suggestion Description: %s\n\n" +
+                "CURRENT low-level plan:\n%s\n\n" +
+                "CURRENT high-level plan summary:\n%s\n\n" +
+                "Expert analysis from %s:\n%s\n\n" +
+                "Expert proposed changes:\n%s\n\n" +
+                "RULES:\n" +
+                "- Produce a COMPLETE revised plan covering ALL work needed to implement the " +
+                "suggestion end-to-end. Do not drop scope unless the expert explicitly asked.\n" +
+                "- Both layers must be present and differ meaningfully: the low-level plan can " +
+                "reference files/classes/frameworks, the high-level plan is plain language with no " +
+                "technical terms.\n" +
+                "- If the expert's recommendation conflicts with the user's original request, prefer " +
+                "the user's request and explain in your message.\n" +
+                "- DO NOT include a tasks list — tasks are generated separately after the plan is approved.\n" +
+                "- DO NOT ask clarification questions in this response. If the expert feedback is " +
+                "unactionable, return the current plan unchanged and explain in 'message'.\n\n" +
+                "Respond with exactly this JSON shape — nothing outside the JSON:\n" +
+                "{\"status\": \"PLAN_REVISED\", " +
+                "\"message\": \"plain-language summary of how you incorporated the expert's feedback\", " +
+                "\"plan\": \"complete revised low-level technical plan\", " +
+                "\"planDisplaySummary\": \"complete revised high-level plain-language summary\"}",
+                expertDisplayName == null ? "an expert" : expertDisplayName,
+                suggestionTitle == null ? "" : suggestionTitle,
+                suggestionDescription == null ? "" : suggestionDescription,
+                currentLowLevelPlan == null ? "(no current plan)" : currentLowLevelPlan,
+                currentHighLevelPlan == null ? "(no high-level summary)" : currentHighLevelPlan,
+                expertDisplayName == null ? "an expert" : expertDisplayName,
+                expertAnalysis == null ? "(no analysis provided)" : expertAnalysis,
+                expertProposedChanges == null ? "(no proposed changes text)" : expertProposedChanges));
+
+        return sendToClaudeAsync(prompt, null, workingDir, null, progressCallback,
+                "apply-expert-feedback", resolveModel(), 0);
+    }
+
+    /**
      * Generate the implementation task list from a fully-reviewed plan. Runs
      * AFTER every expert review has converged so the experts only ever see
      * the plan (never tasks). Uses the main AI model (resolveModel) — never
@@ -1209,15 +1268,15 @@ public class ClaudeService {
                 "{\"status\": \"APPROVED\", \"analysis\": \"what you verified and found to be complete\", " +
                 "\"message\": \"concise NON-TECHNICAL summary for the user\"}\n\n" +
                 "If the plan is missing content, reduces scope, or misrepresents the original request:\n" +
-                "{\"status\": \"CHANGES_PROPOSED\", \"analysis\": \"what is missing or incorrect\", " +
-                "\"proposedChanges\": \"technical description of what needs to be added or changed\", " +
-                "\"revisedPlan\": \"updated low-level technical plan — must contain ALL work needed to implement the suggestion end-to-end\", " +
-                "\"revisedPlanDisplaySummary\": \"updated high-level non-technical summary for the user\", " +
+                "{\"status\": \"CHANGES_PROPOSED\", " +
+                "\"analysis\": \"what is missing, incorrect, or off-track in the current plan\", " +
+                "\"proposedChanges\": \"specific, actionable description of what should be added, removed, " +
+                "or modified — be concrete about WHAT needs to change and WHY\", " +
                 "\"message\": \"concise NON-TECHNICAL summary for the user\"}\n\n" +
-                "IMPORTANT: At this stage you are reviewing the PLAN ONLY. Tasks have NOT been created yet and you MUST NOT " +
-                "propose any task list. Tasks will be generated later from the final approved plan by the main AI model. " +
-                "Do not include a 'revisedTasks' or 'lockedTaskIndices' field — they will be ignored. " +
-                "When proposing changes, the revisedPlan must be the COMPLETE updated plan covering every aspect of implementation.",
+                "IMPORTANT: You are advisory. DO NOT write the revised plan yourself — the main planning AI rewrites " +
+                "the plan from your analysis and proposedChanges. So focus on the critique, not on producing replacement text. " +
+                "Tasks have NOT been created yet and you MUST NOT propose any task list. " +
+                "Do not include 'revisedPlan', 'revisedPlanDisplaySummary', 'revisedTasks', or 'lockedTaskIndices' — they will be ignored.",
                 expertPrompt,
                 suggestionTitle,
                 suggestionDescription,
@@ -1295,19 +1354,19 @@ public class ClaudeService {
                 "If the plan looks good from your perspective:\n" +
                 "{\"status\": \"APPROVED\", \"analysis\": \"your focused technical analysis — what you evaluated and why it passes\", \"message\": \"concise NON-TECHNICAL summary for the user\"}\n\n" +
                 "If you find CRITICAL or MAJOR issues that must be fixed:\n" +
-                "{\"status\": \"CHANGES_PROPOSED\", \"analysis\": \"your technical analysis of the issues found\", " +
-                "\"proposedChanges\": \"technical description of what should change\", " +
-                "\"revisedPlan\": \"updated low-level technical plan — must contain ALL work needed to implement the suggestion end-to-end\", " +
-                "\"revisedPlanDisplaySummary\": \"updated high-level non-technical summary for the user\", " +
+                "{\"status\": \"CHANGES_PROPOSED\", " +
+                "\"analysis\": \"your technical analysis of the issues found\", " +
+                "\"proposedChanges\": \"specific, actionable description of what should change in the plan — " +
+                "be concrete about WHAT to add/remove/modify and WHY\", " +
                 "\"message\": \"concise NON-TECHNICAL summary for the user\"}\n\n" +
                 "If you need the user to answer questions before you can complete your review:\n" +
                 "{\"status\": \"NEEDS_CLARIFICATION\", \"analysis\": \"what you've found so far\", " +
                 "\"questions\": [\"high-level non-technical question 1\", \"high-level non-technical question 2\"], " +
                 "\"message\": \"brief summary of what you need to know\"}\n\n" +
-                "IMPORTANT: At this stage you are reviewing the PLAN ONLY. Tasks have NOT been created yet and you MUST NOT " +
-                "propose any task list. Tasks will be generated later from the final approved plan by the main AI model. " +
-                "Do not include a 'revisedTasks' field — it will be ignored. " +
-                "When proposing changes, revisedPlan must be the COMPLETE updated plan covering every aspect of implementation. " +
+                "IMPORTANT: You are advisory. DO NOT write the revised plan yourself — the main planning AI rewrites " +
+                "the plan from your analysis and proposedChanges. So focus on the critique, not on producing replacement text. " +
+                "Tasks have NOT been created yet and you MUST NOT propose any task list. " +
+                "Do not include 'revisedPlan', 'revisedPlanDisplaySummary', or 'revisedTasks' — they will be ignored. " +
                 "When asking questions, keep them high-level and non-technical. " +
                 "Only propose CHANGES_PROPOSED for critical or major issues — approve with notes for medium issues.",
                 expertPrompt,

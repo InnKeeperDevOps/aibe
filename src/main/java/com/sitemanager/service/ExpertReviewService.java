@@ -1223,28 +1223,49 @@ public class ExpertReviewService {
     }
 
     /**
-     * Expert review has converged. Transition the suggestion to
-     * GENERATING_TASKS and ask the main AI model to turn the now-final plan
-     * into an actionable task list. On success the suggestion lands at
-     * PLANNED and admins are notified for final approval. On failure the
-     * suggestion stays at GENERATING_TASKS with a failure phase so an admin
-     * can retry.
+     * Expert review has converged. Whether the plan was changed during this
+     * session or not, control always returns to PLAN_PROPOSED so admin can
+     * review the (possibly revised) plan. If experts did not propose any
+     * changes, expertsApprovedCurrentPlan is set to true — admin's next
+     * approval then skips another expert pass and jumps to task generation.
      */
     private void finalizeExpertReviewAndGenerateTasks(Suggestion suggestion) {
         Long suggestionId = suggestion.getId();
-        suggestion.setStatus(SuggestionStatus.GENERATING_TASKS);
+        Boolean planChangedBox = suggestion.getExpertReviewPlanChanged();
+        boolean planChanged = Boolean.TRUE.equals(planChangedBox);
+
+        suggestion.setStatus(SuggestionStatus.PLAN_PROPOSED);
         suggestion.setExpertReviewStep(null);
         suggestion.setExpertReviewRound(null);
         suggestion.setExpertReviewPlanChanged(null);
         suggestion.setTotalExpertReviewRounds(null);
         suggestion.setExpertReviewChangedDomains(null);
-        suggestion.setCurrentPhase("Generating tasks from the approved plan...");
+        suggestion.setExpertsApprovedCurrentPlan(!planChanged);
+        suggestion.setCurrentPhase(planChanged
+                ? "AI experts revised the plan — waiting for your review"
+                : "AI experts approved the plan — waiting for your approval");
         suggestionRepository.save(suggestion);
         broadcastUpdate(suggestion);
         broadcastExpertReviewStatus(suggestionId);
 
-        // Main AI model generates the task list. resolveModel() inside
-        // generateTasksFromPlan ensures the expert model is never used here.
+        addMessage(suggestionId, SenderType.SYSTEM, "System", planChanged
+                ? "AI expert review has completed. The plan was revised — please review the updated plan."
+                : "AI expert review has completed. Every expert approved the plan as-is. " +
+                  "Approve the plan to start generating tasks, or request more changes.");
+        notifyAdminsApprovalNeeded(suggestion);
+    }
+
+    /**
+     * Admin has approved a plan that already has AI expert approval on this
+     * version. Kick off the main-model task generation now.
+     */
+    public void generateTasksFromApprovedPlan(Suggestion suggestion) {
+        Long suggestionId = suggestion.getId();
+        suggestion.setStatus(SuggestionStatus.GENERATING_TASKS);
+        suggestion.setCurrentPhase("Generating tasks from the approved plan...");
+        suggestionRepository.save(suggestion);
+        broadcastUpdate(suggestion);
+
         claudeService.generateTasksFromPlan(
                 suggestion.getTitle(),
                 suggestion.getDescription(),

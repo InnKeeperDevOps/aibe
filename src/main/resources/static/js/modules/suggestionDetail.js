@@ -222,8 +222,34 @@ export async function loadDetail(id) {
         (isAdmin && (canApprove || canForceReApproval || canApprovePlan)) ? '' : 'none';
     document.getElementById('forceReApprovalBtn').style.display =
         (isAdmin && canForceReApproval) ? '' : 'none';
+
+    // Plan-review block: approve plan + request changes + AI-review status badge.
+    const planReviewActions = document.getElementById('planReviewActions');
+    if (planReviewActions) {
+        planReviewActions.style.display = canApprovePlan ? '' : 'none';
+    }
     const approvePlanBtn = document.getElementById('approvePlanBtn');
-    if (approvePlanBtn) approvePlanBtn.style.display = canApprovePlan ? '' : 'none';
+    if (approvePlanBtn) {
+        // Label reflects what the next click will trigger.
+        approvePlanBtn.textContent = suggestion.expertsApprovedCurrentPlan
+            ? 'Approve plan → generate tasks'
+            : 'Approve plan → start AI expert review';
+    }
+    const planReviewBadge = document.getElementById('planReviewBadge');
+    if (planReviewBadge && canApprovePlan) {
+        if (suggestion.expertsApprovedCurrentPlan) {
+            planReviewBadge.innerHTML =
+                '<span style="display:inline-block;padding:0.15rem 0.55rem;background:#16a34a1a;color:#16a34a;border:1px solid #16a34a55;border-radius:999px;font-size:0.75rem;font-weight:600">✓ AI experts approved this plan</span>'
+                + ' <span style="color:var(--text-muted);font-size:0.8rem">— approving will generate tasks.</span>';
+        } else {
+            planReviewBadge.innerHTML =
+                '<span style="display:inline-block;padding:0.15rem 0.55rem;background:#d976061a;color:#d97706;border:1px solid #d9770655;border-radius:999px;font-size:0.75rem;font-weight:600">⟳ AI experts have not yet reviewed this plan version</span>'
+                + ' <span style="color:var(--text-muted);font-size:0.8rem">— approving will send it to AI experts.</span>';
+        }
+    }
+    // Always reset the textarea visibility when the view changes.
+    const requestBox = document.getElementById('requestPlanChangesBox');
+    if (requestBox && !canApprovePlan) requestBox.style.display = 'none';
 
     // Retry PR action
     const canRetryPr = isAdmin && suggestion.currentPhase === 'Done — review request failed';
@@ -465,11 +491,17 @@ export async function restartPlan() {
 }
 
 export async function approvePlan() {
-    if (!confirm('Send this plan to expert review? Tasks will be generated automatically by the main AI model after every expert review converges. The plan can still be revised by experts during review.')) return;
+    const expertsApproved = state.currentSuggestionData
+            && state.currentSuggestionData.expertsApprovedCurrentPlan;
+    const msg = expertsApproved
+        ? 'Approve this plan? AI experts have already approved this version — tasks will be generated next.'
+        : 'Approve this plan? The plan will be sent to AI experts for review, then come back to you for final approval.';
+    if (!confirm(msg)) return;
     const btn = document.getElementById('approvePlanBtn');
+    const originalText = btn ? btn.textContent : '';
     if (btn) {
         btn.disabled = true;
-        btn.textContent = 'Starting expert review...';
+        btn.textContent = expertsApproved ? 'Generating tasks...' : 'Starting expert review...';
     }
     try {
         const result = await api('/suggestions/' + state.currentSuggestion + '/approve-plan', { method: 'POST' });
@@ -481,8 +513,46 @@ export async function approvePlan() {
     } finally {
         if (btn) {
             btn.disabled = false;
-            btn.textContent = 'Approve plan → start expert review';
+            btn.textContent = originalText;
         }
+    }
+}
+
+export function toggleRequestPlanChanges(forceOpen) {
+    const box = document.getElementById('requestPlanChangesBox');
+    if (!box) return;
+    const willOpen = (typeof forceOpen === 'boolean') ? forceOpen : box.style.display === 'none';
+    box.style.display = willOpen ? '' : 'none';
+    if (willOpen) {
+        const ta = document.getElementById('requestPlanChangesText');
+        if (ta) ta.focus();
+    }
+}
+
+export async function submitRequestPlanChanges() {
+    const ta = document.getElementById('requestPlanChangesText');
+    const feedback = ta ? ta.value.trim() : '';
+    if (!feedback) {
+        alert('Please describe what should change about the plan.');
+        return;
+    }
+    const btn = document.querySelector('#requestPlanChangesBox .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
+    try {
+        const result = await api('/suggestions/' + state.currentSuggestion + '/request-plan-changes', {
+            method: 'POST',
+            body: JSON.stringify({ feedback }),
+        });
+        if (result && result.error) {
+            alert('Submit failed: ' + result.error);
+            return;
+        }
+        if (ta) ta.value = '';
+        toggleRequestPlanChanges(false);
+    } catch (e) {
+        alert('Submit failed: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Submit feedback'; }
     }
 }
 

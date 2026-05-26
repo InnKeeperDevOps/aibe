@@ -167,6 +167,7 @@ public class PlanController {
         body.put("expertReviewNotes", s.getExpertReviewNotes());
         body.put("expertReviewPlanChanged", s.getExpertReviewPlanChanged());
         body.put("failureReason", s.getFailureReason());
+        body.put("expertsApprovedCurrentPlan", s.isExpertsApprovedCurrentPlan());
         body.put("tasks", tasks);
         return ResponseEntity.ok(body);
     }

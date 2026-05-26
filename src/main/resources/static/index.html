@@ -497,8 +497,22 @@
                     color:var(--text-muted);font-size:0.85rem"></div>
 
             <div id="adminActions" class="admin-actions" style="display:none">
-                <button class="btn btn-success btn-sm" id="approvePlanBtn" style="display:none"
-                        onclick="app.approvePlan()" title="Send the plan to expert review. Tasks will be generated after experts converge.">Approve plan → start expert review</button>
+                <div id="planReviewActions" style="display:none;width:100%">
+                    <div id="planReviewBadge" style="font-size:0.85rem;margin-bottom:0.5rem"></div>
+                    <button class="btn btn-success btn-sm" id="approvePlanBtn"
+                            onclick="app.approvePlan()" title="Approve the current plan.">Approve plan</button>
+                    <button class="btn btn-sm" id="requestPlanChangesBtn"
+                            style="background:#b45309;color:#fff;margin-left:0.5rem"
+                            onclick="app.toggleRequestPlanChanges()">Request changes</button>
+                    <div id="requestPlanChangesBox" style="display:none;margin-top:0.75rem">
+                        <textarea id="requestPlanChangesText" rows="4" style="width:100%"
+                                  placeholder="What should change about the plan? Be specific — the AI can ask follow-up questions if anything is unclear."></textarea>
+                        <div style="margin-top:0.5rem;display:flex;gap:0.5rem">
+                            <button class="btn btn-primary btn-sm" onclick="app.submitRequestPlanChanges()">Submit feedback</button>
+                            <button class="btn btn-outline btn-sm" onclick="app.toggleRequestPlanChanges(false)">Cancel</button>
+                        </div>
+                    </div>
+                </div>
                 <button class="btn btn-success btn-sm" onclick="app.approve()">Approve</button>
                 <button class="btn btn-danger btn-sm" onclick="app.deny()">Deny</button>
                 <button class="btn btn-sm" id="forceReApprovalBtn"

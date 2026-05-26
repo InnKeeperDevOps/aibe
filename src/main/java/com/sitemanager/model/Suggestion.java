@@ -110,6 +110,9 @@ public class Suggestion {
     @Column(length = 1000)
     private String failureReason;
 
+    @Column(name = "experts_approved_current_plan", nullable = false)
+    private boolean expertsApprovedCurrentPlan = false;
+
     public Suggestion() {}
 
     @PrePersist
@@ -231,6 +234,8 @@ public class Suggestion {
     public void setExpertApprovalTracker(String expertApprovalTracker) { this.expertApprovalTracker = expertApprovalTracker; }
     public String getFailureReason() { return failureReason; }
     public void setFailureReason(String failureReason) { this.failureReason = failureReason; }
+    public boolean isExpertsApprovedCurrentPlan() { return expertsApprovedCurrentPlan; }
+    public void setExpertsApprovedCurrentPlan(boolean v) { this.expertsApprovedCurrentPlan = v; }
 
     public Map<String, ExpertApprovalEntry> getExpertApprovalMap() {
         if (expertApprovalTracker == null || expertApprovalTracker.isBlank()) {

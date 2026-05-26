@@ -131,7 +131,7 @@ class SuggestionLifecycleIntegrationTest {
                 .thenReturn(CompletableFuture.completedFuture("Evaluation complete"));
         when(claudeService.continueConversation(any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture("Conversation continued"));
-        when(claudeService.executePlan(any(), any(), any(), any(), any()))
+        when(claudeService.executePlan(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture("Plan executed"));
         when(claudeService.mergeWithMain(any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture("Merged"));
@@ -356,9 +356,9 @@ class SuggestionLifecycleIntegrationTest {
 
         // Mock per-task execution: return a COMPLETED status for each task
         when(claudeService.executeSingleTask(
-                any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
+                any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
                 .thenAnswer(inv -> {
-                    int taskOrder = inv.getArgument(2);
+                    int taskOrder = inv.getArgument(3);
                     return CompletableFuture.completedFuture(
                             "{\"taskOrder\":" + taskOrder + ",\"status\":\"COMPLETED\","
                                     + "\"message\":\"Task " + taskOrder + " done\"}");

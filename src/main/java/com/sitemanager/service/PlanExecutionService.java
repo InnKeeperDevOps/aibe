@@ -377,6 +377,7 @@ public class PlanExecutionService {
             claudeService.executePlan(
                     executionSessionId,
                     suggestion.getPlanSummary() != null ? suggestion.getPlanSummary() : suggestion.getDescription(),
+                    suggestion.getPlanDisplaySummary(),
                     tasksJson,
                     workDir,
                     progress -> handleExecutionProgress(suggestionId, progress)
@@ -442,12 +443,15 @@ public class PlanExecutionService {
 
         String executionSessionId = claudeService.generateSessionId();
         String workDir = suggestion.getWorkingDirectory();
-        String plan = suggestion.getPlanSummary() != null ? suggestion.getPlanSummary() : suggestion.getDescription();
+        String lowLevelPlan = suggestion.getPlanSummary() != null
+                ? suggestion.getPlanSummary() : suggestion.getDescription();
+        String highLevelPlan = suggestion.getPlanDisplaySummary();
 
         final PlanTask taskSnapshot = nextTask;
         claudeService.executeSingleTask(
                 executionSessionId,
-                plan,
+                lowLevelPlan,
+                highLevelPlan,
                 taskOrder,
                 nextTask.getTitle(),
                 nextTask.getDescription(),

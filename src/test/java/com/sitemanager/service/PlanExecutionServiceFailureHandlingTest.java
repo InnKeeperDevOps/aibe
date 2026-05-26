@@ -72,7 +72,7 @@ class PlanExecutionServiceFailureHandlingTest {
         when(suggestionRepository.countByStatusIn(any())).thenReturn(0L);
         when(planTaskRepository.findBySuggestionIdOrderByTaskOrder(any())).thenReturn(new java.util.ArrayList<>());
         when(claudeService.generateSessionId()).thenReturn("test-session");
-        when(claudeService.executeSingleTask(any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
+        when(claudeService.executeSingleTask(any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture("{}"));
 
         service = new PlanExecutionService(
@@ -146,7 +146,7 @@ class PlanExecutionServiceFailureHandlingTest {
         invokeHandleTaskException(2L, 1, task, transientEx);
 
         // Verify retry was kicked off — executeSingleTask called for the retry
-        verify(claudeService).executeSingleTask(any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any());
+        verify(claudeService).executeSingleTask(any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any());
     }
 
     @Test
@@ -180,7 +180,7 @@ class PlanExecutionServiceFailureHandlingTest {
 
         // Retry count incremented and retry execution triggered
         assertThat(task.getRetryCount()).isEqualTo(1);
-        verify(claudeService).executeSingleTask(any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any());
+        verify(claudeService).executeSingleTask(any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any());
     }
 
     // -------------------------------------------------------------------------

@@ -1073,12 +1073,18 @@ public class ClaudeService {
                 "generate-tasks", resolveModel(), 0);
     }
 
-    public CompletableFuture<String> executePlan(String sessionId, String plan, String tasksJson,
+    public CompletableFuture<String> executePlan(String sessionId, String lowLevelPlan,
+                                                  String highLevelPlan, String tasksJson,
                                                   String workingDir,
                                                   Consumer<String> progressCallback) {
+        String highLevelBlock = (highLevelPlan != null && !highLevelPlan.isBlank()
+                && !highLevelPlan.equals(lowLevelPlan))
+                ? "High-level (user-facing) summary of the plan:\n" + highLevelPlan + "\n\n"
+                : "";
         String prompt = prependManagedFoldersScope(String.format(
                 "Execute the following implementation plan in the repository at %s.\n\n" +
-                "Plan:\n%s\n\n" +
+                "Low-level (technical) implementation plan — this is the authoritative spec for the work:\n%s\n\n" +
+                "%s" +
                 "Tasks (execute in order):\n%s\n\n" +
                 "COMMUNICATION RULES:\n" +
                 "- All message fields in your JSON output MUST be written in plain, non-technical language.\n" +
@@ -1109,7 +1115,10 @@ public class ClaudeService {
                 "{\"status\": \"COMPLETED\", \"message\": \"summary\", \"testsRun\": number, \"testsPassed\": number}\n" +
                 "If the overall execution fails:\n" +
                 "{\"status\": \"FAILED\", \"message\": \"what went wrong\"}",
-                workingDir, plan, tasksJson != null ? tasksJson : "No structured tasks — follow the plan above."
+                workingDir,
+                lowLevelPlan == null ? "" : lowLevelPlan,
+                highLevelBlock,
+                tasksJson != null ? tasksJson : "No structured tasks — follow the plan above."
         ));
 
         return sendToClaudeAsync(prompt, sessionId, workingDir, null, progressCallback, "execute", resolveModel(), 0);
@@ -1119,20 +1128,26 @@ public class ClaudeService {
      * Execute a single task from the plan. Called one task at a time so experts
      * can review each task's output before proceeding to the next.
      */
-    public CompletableFuture<String> executeSingleTask(String sessionId, String plan,
+    public CompletableFuture<String> executeSingleTask(String sessionId, String lowLevelPlan,
+                                                         String highLevelPlan,
                                                          int taskOrder, String taskTitle,
                                                          String taskDescription,
                                                          int totalTasks,
                                                          String completedTasksSummary,
                                                          String workingDir,
                                                          Consumer<String> progressCallback) {
+        String highLevelBlock = (highLevelPlan != null && !highLevelPlan.isBlank()
+                && !highLevelPlan.equals(lowLevelPlan))
+                ? "High-level (user-facing) summary of the plan:\n" + highLevelPlan + "\n\n"
+                : "";
         String prompt = prependManagedFoldersScope(String.format(
                 "Execute ONLY task %d of %d in the repository at %s.\n\n" +
-                "Overall Plan:\n%s\n\n" +
+                "Low-level (technical) implementation plan — this is the authoritative spec for the work:\n%s\n\n" +
                 "%s" +
-                "YOUR TASK (Task %d of %d):\n" +
-                "Title: %s\n" +
-                "Description: %s\n\n" +
+                "%s" +
+                "YOUR TASK (Task %d of %d) — both layers shown so you stay aligned:\n" +
+                "Title (low-level): %s\n" +
+                "Description (low-level): %s\n\n" +
                 "COMMUNICATION RULES:\n" +
                 "- All message fields in your JSON output MUST be written in plain, non-technical language.\n" +
                 "- NEVER mention programming languages, frameworks, libraries, file names, class names, or technical details in messages.\n" +
@@ -1158,7 +1173,8 @@ public class ClaudeService {
                 "{\"taskOrder\": %d, \"status\": \"FAILED\", \"message\": \"what went wrong\"}\n\n" +
                 "IMPORTANT: Only work on task %d. Do NOT proceed to other tasks.",
                 taskOrder, totalTasks, workingDir,
-                plan,
+                lowLevelPlan == null ? "" : lowLevelPlan,
+                highLevelBlock,
                 completedTasksSummary != null && !completedTasksSummary.isBlank() ?
                         "Previously completed tasks:\n" + completedTasksSummary + "\n\n" : "",
                 taskOrder, totalTasks,

@@ -60,9 +60,9 @@ class SuggestionRetryControllerTest {
         suggestionRepository.deleteAll();
 
         when(claudeService.generateSessionId()).thenReturn("test-session");
-        when(claudeService.executeSingleTask(any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
+        when(claudeService.executeSingleTask(any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture("{}"));
-        when(claudeService.executePlan(any(), any(), any(), any(), any()))
+        when(claudeService.executePlan(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture("{}"));
         when(slackNotificationService.sendNotification(any(), anyString()))
                 .thenReturn(CompletableFuture.completedFuture(null));

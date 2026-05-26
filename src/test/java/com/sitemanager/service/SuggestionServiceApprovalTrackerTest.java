@@ -73,7 +73,8 @@ class SuggestionServiceApprovalTrackerTest {
                 mock(ExpertReviewCostRepository.class),
                 mock(CostRollupService.class),
                 spendingLimitService,
-                mock(SpendingAlertService.class)
+                mock(SpendingAlertService.class),
+                mock(PlanExecutionService.class)
         );
     }
 

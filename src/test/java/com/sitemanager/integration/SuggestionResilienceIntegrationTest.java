@@ -107,9 +107,9 @@ class SuggestionResilienceIntegrationTest extends SuggestionLifecycleIntegration
 
         // executeSingleTask returns COMPLETED for whichever task order it is called with
         when(claudeService.executeSingleTask(
-                any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
+                any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
                 .thenAnswer(inv -> {
-                    int taskOrder = inv.getArgument(2);
+                    int taskOrder = inv.getArgument(3);
                     return CompletableFuture.completedFuture(
                             "{\"taskOrder\":" + taskOrder + ",\"status\":\"COMPLETED\","
                                     + "\"message\":\"Task " + taskOrder + " done\"}");
@@ -133,7 +133,7 @@ class SuggestionResilienceIntegrationTest extends SuggestionLifecycleIntegration
 
         // Verify executeSingleTask was never called for taskOrder=0 (already COMPLETED)
         verify(claudeService, never()).executeSingleTask(
-                any(), any(), eq(0), any(), any(), anyInt(), any(), any(), any());
+                any(), any(), any(), eq(0), any(), any(), anyInt(), any(), any(), any());
     }
 
     @Test
@@ -149,7 +149,7 @@ class SuggestionResilienceIntegrationTest extends SuggestionLifecycleIntegration
         // all subsequent calls return a COMPLETED result so execution proceeds normally.
         AtomicInteger callCount = new AtomicInteger(0);
         when(claudeService.executeSingleTask(
-                any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
+                any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
                 .thenAnswer(inv -> {
                     int call = callCount.incrementAndGet();
                     if (call == 1) {
@@ -157,7 +157,7 @@ class SuggestionResilienceIntegrationTest extends SuggestionLifecycleIntegration
                                 new ClaudeService.ClaudeExecutionException(
                                         "Session died", ClaudeService.ClaudeFailureType.TRANSIENT, 1));
                     }
-                    int taskOrder = inv.getArgument(2);
+                    int taskOrder = inv.getArgument(3);
                     return CompletableFuture.completedFuture(
                             "{\"taskOrder\":" + taskOrder + ",\"status\":\"COMPLETED\","
                                     + "\"message\":\"Task " + taskOrder + " done\"}");
@@ -185,7 +185,7 @@ class SuggestionResilienceIntegrationTest extends SuggestionLifecycleIntegration
 
         // Confirm the retry happened: executeSingleTask must have been called at least twice
         verify(claudeService, atLeast(2)).executeSingleTask(
-                any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any());
+                any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any());
     }
 
     @Test
@@ -207,7 +207,7 @@ class SuggestionResilienceIntegrationTest extends SuggestionLifecycleIntegration
 
         // executeSingleTask always fails with a transient error to exhaust the retry budget
         when(claudeService.executeSingleTask(
-                any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
+                any(), any(), any(), anyInt(), any(), any(), anyInt(), any(), any(), any()))
                 .thenAnswer(inv -> CompletableFuture.failedFuture(
                         new ClaudeService.ClaudeExecutionException(
                                 "Session permanently unavailable",

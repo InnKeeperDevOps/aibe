@@ -69,7 +69,8 @@ class ExpertReviewServiceCostRecordingTest {
                 costRepository,
                 costRollupService,
                 spendingLimitService,
-                spendingAlertService
+                spendingAlertService,
+                mock(PlanExecutionService.class)
         );
     }
 

@@ -1,1 +1,0 @@
-ALTER TABLE app_users ADD COLUMN notification_volume INTEGER NOT NULL DEFAULT 75;

@@ -63,11 +63,4 @@ public class UserService {
     public Optional<User> findById(Long id) {
         return userRepository.findById(id);
     }
-
-    public User updateNotificationVolume(Long id, int volume) {
-        User user = userRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
-        user.setNotificationVolume(Math.max(0, Math.min(100, volume)));
-        return userRepository.save(user);
-    }
 }

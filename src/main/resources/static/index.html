@@ -77,6 +77,15 @@
         </button>
 
         <div id="menuAuthDivider" class="sidebar-section-label">Account</div>
+        <div id="volumeControl" class="sidebar-volume" style="display:none">
+            <label for="volumeSlider" class="sidebar-volume-label">
+                <span class="sidebar-icon">🔊</span><span>Volume</span>
+                <span id="volumeValue" class="sidebar-volume-value">75%</span>
+            </label>
+            <input type="range" id="volumeSlider" min="0" max="100" value="75"
+                   class="sidebar-volume-slider"
+                   oninput="app.setVolume(this.value)">
+        </div>
         <button id="changePasswordBtn" class="sidebar-item" role="menuitem" type="button"
                 style="display:none"
                 onclick="app.openChangePasswordModal()">

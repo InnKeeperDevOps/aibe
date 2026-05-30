@@ -1,6 +1,7 @@
 package com.sitemanager.controller;
 
 import com.sitemanager.dto.UserSummaryDto;
+import com.sitemanager.model.User;
 import com.sitemanager.model.enums.Permission;
 import com.sitemanager.service.PermissionService;
 import com.sitemanager.service.UserService;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @RestController
@@ -82,6 +84,39 @@ public class UserController {
         }
         try {
             return ResponseEntity.ok(UserSummaryDto.from(userService.assignGroup(id, groupId)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /** Returns the current logged-in user's personal preferences (e.g. notification volume). */
+    @GetMapping("/me/preferences")
+    public ResponseEntity<?> getMyPreferences(HttpSession session) {
+        Long userId = (Long) session.getAttribute("userId");
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Not logged in"));
+        }
+        Optional<User> user = userService.findById(userId);
+        if (user.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("error", "User not found"));
+        }
+        return ResponseEntity.ok(Map.of("notificationVolume", user.get().getNotificationVolume()));
+    }
+
+    /** Persists the current logged-in user's personal preferences. */
+    @PutMapping("/me/preferences")
+    public ResponseEntity<?> updateMyPreferences(@RequestBody Map<String, Object> body, HttpSession session) {
+        Long userId = (Long) session.getAttribute("userId");
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Not logged in"));
+        }
+        Object volume = body.get("notificationVolume");
+        if (!(volume instanceof Number)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "notificationVolume must be a number"));
+        }
+        try {
+            User updated = userService.updateNotificationVolume(userId, ((Number) volume).intValue());
+            return ResponseEntity.ok(Map.of("notificationVolume", updated.getNotificationVolume()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

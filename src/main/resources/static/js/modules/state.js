@@ -4,6 +4,8 @@ export const state = {
     role: '',
     setupRequired: false,
     permissions: [],
+    // Per-user notification sound volume (0-100), loaded from the server on login.
+    notificationVolume: 75,
     currentSuggestion: null,
     currentStatus: null,
     settings: {},

@@ -35,6 +35,9 @@ public class User {
     @Column(columnDefinition = "BOOLEAN DEFAULT 0")
     private boolean denied = false;
 
+    @Column(name = "notification_volume", nullable = false)
+    private int notificationVolume = 75;
+
     public User() {}
 
     public User(String username, String passwordHash, UserRole role) {
@@ -65,4 +68,6 @@ public class User {
     public void setApproved(boolean approved) { this.approved = approved; }
     public boolean isDenied() { return denied; }
     public void setDenied(boolean denied) { this.denied = denied; }
+    public int getNotificationVolume() { return notificationVolume; }
+    public void setNotificationVolume(int notificationVolume) { this.notificationVolume = notificationVolume; }
 }

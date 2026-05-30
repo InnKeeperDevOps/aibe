@@ -209,6 +209,12 @@ import {
     updateApprovalBanner,
 } from './modules/websocket.js';
 
+import {
+    setVolume,
+    loadVolume,
+    playNotificationSound,
+} from './modules/volume.js';
+
 // ---------------------------------------------------------------------------
 // Functions not yet extracted to dedicated modules
 // ---------------------------------------------------------------------------
@@ -491,6 +497,11 @@ window.app = {
     disconnectWs,
     connectNotificationsWs,
     updateApprovalBanner,
+
+    // volume / notification sound
+    setVolume,
+    loadVolume,
+    playNotificationSound,
 
     // create / draft / reply (not in dedicated modules)
     createSuggestion,

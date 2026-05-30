@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { api } from './api.js';
 import { navigate } from './navigation.js';
+import { loadVolume, updateVolumeControlVisibility } from './volume.js';
 
 // Callbacks for functions provided by modules not yet created in this phase.
 // Populated via registerAuthCallbacks() once those modules are ready.
@@ -21,6 +22,10 @@ export async function checkAuth() {
     state.role = data.role;
     state.permissions = data.permissions || [];
     updateHeader();
+
+    if (data.loggedIn) {
+        loadVolume();
+    }
 
     if (data.setupRequired) {
         navigate('setup');
@@ -77,6 +82,7 @@ export function updateHeader() {
     updateProjectDefinitionBtn();
     updateMyDraftsBtn();
     updateSaveAsDraftBtn();
+    updateVolumeControlVisibility();
 }
 
 export function updateNewSuggestionBtn() {
@@ -166,6 +172,7 @@ export async function login(e) {
     state.username = data.username;
     state.role = data.role;
     updateHeader();
+    loadVolume();
     Notification.requestPermission();
     _callbacks.connectNotificationsWs(state.username);
     navigate('list');

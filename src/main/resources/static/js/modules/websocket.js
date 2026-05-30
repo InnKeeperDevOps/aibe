@@ -5,6 +5,7 @@ import { renderTasks, updateTask } from './tasks.js';
 import { updateExpertReview, addExpertNote, showExpertClarificationWizard } from './expertReview.js';
 import { showClarificationWizard, hideClarificationWizard } from './clarification.js';
 import { onProjectDefinitionUpdate } from './projectDefinition.js';
+import { playNotificationSound } from './volume.js';
 
 export function connectWs(suggestionId) {
     disconnectWs();
@@ -84,6 +85,7 @@ function handleNotificationWsMessage(data) {
             tag: 'suggestion-clarification-' + data.suggestionId
         });
         n.onclick = () => { window.focus(); loadDetail(data.suggestionId); n.close(); };
+        playNotificationSound();
     } else if (data.type === 'approval_needed') {
         state.approvalPendingCount++;
         updateApprovalBanner();
